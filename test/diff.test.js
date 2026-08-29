@@ -108,3 +108,26 @@ test('renderer emits no escape codes when colour is disabled', () => {
   const output = renderFileDiff(myers.diffLines('a\n', 'b\n'), { color: false });
   assert.ok(!output.includes('\x1b['));
 });
+
+test('binary content is flagged instead of being line-diffed', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { makeRepo, commit, git, cleanup } = require('./helpers');
+  const reader = require('../src/git-reader');
+
+  const dir = makeRepo();
+  try {
+    commit(dir, 'text.txt', 'hello\n', 'Add text');
+    // A NUL byte early in the file is what makes git treat it as binary.
+    fs.writeFileSync(path.join(dir, 'blob.bin'), Buffer.from([0, 1, 2, 3, 0, 255]));
+    git(dir, ['add', '.']);
+    git(dir, ['commit', '-q', '-m', 'Add binary']);
+
+    const changes = reader.changedPaths('HEAD~1', 'HEAD', { cwd: dir });
+    const blob = changes.find((change) => change.path === 'blob.bin');
+    assert.ok(blob, 'expected the binary file in the change list');
+    assert.equal(blob.binary, true);
+  } finally {
+    cleanup(dir);
+  }
+});

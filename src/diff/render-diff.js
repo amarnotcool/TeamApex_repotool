@@ -42,6 +42,13 @@ function renderFileHeader(path, status, ops, options = {}) {
   ].join('  ');
 }
 
+/** Stand-in header for binary content, which we never try to line-diff. */
+function renderBinaryFile(path, status, options = {}) {
+  const style = createStyle({ enabled: options.color });
+  const label = { A: 'added', D: 'deleted' }[status] || 'changed';
+  return `${style.bold(path)}  ${style.dim(`binary, ${label} — contents not compared`)}`;
+}
+
 /** Bottom-line summary across every file in the diff. */
 function renderSummary(fileCount, totals, options = {}) {
   const style = createStyle({ enabled: options.color });
@@ -50,4 +57,4 @@ function renderSummary(fileCount, totals, options = {}) {
   );
 }
 
-module.exports = { renderFileDiff, renderFileHeader, renderSummary };
+module.exports = { renderFileDiff, renderFileHeader, renderBinaryFile, renderSummary };

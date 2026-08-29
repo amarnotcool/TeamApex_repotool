@@ -140,6 +140,13 @@ function commandDiff(positional, flags, style) {
   const totals = { added: 0, removed: 0 };
 
   for (const change of changes) {
+    // Diffing binary content line by line is meaningless and slow, so we
+    // report it the way git does and move on.
+    if (change.binary) {
+      console.log(render.renderBinaryFile(change.path, change.status, { color }));
+      continue;
+    }
+
     const before = change.status === 'A' ? '' : reader.fileAtCommit(hashA, change.path, { cwd }) || '';
     const after = change.status === 'D' ? '' : reader.fileAtCommit(hashB, change.path, { cwd }) || '';
     const ops = myers.diffLines(before, after);
@@ -147,10 +154,10 @@ function commandDiff(positional, flags, style) {
     totals.added += fileStats.added;
     totals.removed += fileStats.removed;
 
-    console.log();
     console.log(render.renderFileHeader(change.path, change.status, ops, { color }));
     if (!flags.stat) {
       console.log(render.renderFileDiff(ops, { color, context }));
+      console.log();
     }
   }
 

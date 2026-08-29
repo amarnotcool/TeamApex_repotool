@@ -198,16 +198,36 @@ function fileAtCommit(rev, path, { cwd = process.cwd() } = {}) {
   return out === null ? null : out;
 }
 
-/** Paths that differ between two revisions, with their change status. */
+/**
+ * Paths that differ between two revisions, with their change status and
+ * whether git considers them binary.
+ *
+ * `--numstat` prints "-\t-" instead of line counts for binary content, which
+ * is the cheapest reliable binary check available: it uses git's own
+ * detection rather than us guessing from bytes.
+ */
 function changedPaths(revA, revB, { cwd = process.cwd() } = {}) {
   const out = git(['diff', '--name-status', revA, revB], { cwd, allowFailure: true });
   if (out === null) return [];
+
+  const binary = new Set();
+  const numstat = git(['diff', '--numstat', revA, revB], { cwd, allowFailure: true });
+  if (numstat !== null) {
+    for (const line of numstat.split('\n')) {
+      const columns = line.split('\t');
+      if (columns.length >= 3 && columns[0] === '-' && columns[1] === '-') {
+        binary.add(columns[columns.length - 1]);
+      }
+    }
+  }
+
   return out
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => {
       const columns = line.split('\t');
-      return { status: columns[0][0], path: columns[columns.length - 1] };
+      const path = columns[columns.length - 1];
+      return { status: columns[0][0], path, binary: binary.has(path) };
     });
 }
 
