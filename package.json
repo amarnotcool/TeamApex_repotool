@@ -1,0 +1,14 @@
+{
+  "name": "repotool",
+  "version": "0.1.0",
+  "description": "Zero-dependency CLI that reads, graphs, queries and diffs a git repository using only the Node.js standard library.",
+  "bin": { "repotool": "bin/repotool.js" },
+  "main": "src/git-reader.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "verify": "sh verify-zero-deps.sh"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT",
+  "dependencies": {}
+}
