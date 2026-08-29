@@ -132,3 +132,25 @@ test('reading a directory that is not a repository throws GitError', () => {
     return true;
   });
 });
+
+test('a merge draws a single opening diagonal, not a doubled bar', () => {
+  const dir = branchyRepo();
+  try {
+    const { commits } = reader.readCommits({ cwd: dir });
+    const output = renderAscii(buildGraph(commits), { color: false, maxWidth: 200 });
+    const isConnector = (line) => line.trim() !== '' && /^[|\\/_ ]+$/.test(line);
+    const connectors = output.split('\n').filter(isConnector);
+
+    assert.ok(connectors.length > 0, 'a branchy history must produce connector rows');
+    assert.ok(
+      connectors.some((line) => line.startsWith('|\\')),
+      'expected a merge to open a lane with a diagonal',
+    );
+    assert.ok(
+      connectors.every((line) => !line.endsWith('\\|')),
+      'a lane opened by a merge must not also be drawn as a vertical bar',
+    );
+  } finally {
+    cleanup(dir);
+  }
+});

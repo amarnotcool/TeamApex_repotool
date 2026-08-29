@@ -27,14 +27,20 @@ Parses the full commit and merge history and draws it as a lane graph.
 8 commit(s), on branch main
 
 M      f27040a 2026-08-20 Ada Lovelace (main) Merge hotfix
-|\|
+|\
 | *    2c2040d 2026-08-20 Ada Lovelace (hotfix) Hotfix
 | |
 M |    0eb3d2e 2026-08-20 Ada Lovelace Merge feature into main
-|\| |
+|\|\
 * | |  5a22eb4 2026-08-20 Ada Lovelace Add readme
 |   |
 |   *  ab19254 2026-08-20 Grace Hopper (feature) Extend feature
+|   |
+|   *  ef60ae3 2026-08-20 Grace Hopper Add feature file
+|__/
+*      01f599d 2026-08-20 Ada Lovelace Tweak app
+|
+o      231d066 2026-08-20 Ada Lovelace Initial commit
 ```
 
 Flags: `--limit N`, `--branch REF`, `--no-dates`, `--repo PATH`, `--no-color`.

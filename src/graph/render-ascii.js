@@ -46,34 +46,58 @@ function nodeRow(row, style) {
 }
 
 /**
- * The row between this commit and the next: shows lanes continuing, opening
- * for a merge parent, or closing where a branch rejoined its target.
+ * The row between this commit and the next.
+ *
+ * Three things can happen to a lane here, and each has one glyph:
+ *   `|`  the lane simply continues into the next row
+ *   `\`  a merge opened a new lane to the right of the commit
+ *   `/`  the commit's lane collapsed into a lane further left
+ *
+ * A diagonal only spans one column. When a parent lands more than one lane
+ * away we bridge the gap with `_`, the way git does for long jumps, so the
+ * connection stays readable instead of pointing at the wrong column.
  */
 function transitionRow(row, style) {
-  const laneCount = Math.max(row.lanesBefore.length, row.lanesAfter.length, ...row.parentLanes.map((l) => l + 1), 1);
+  const laneCount = Math.max(
+    row.lanesBefore.length,
+    row.lanesAfter.length,
+    ...row.parentLanes.map((lane) => lane + 1),
+    1,
+  );
   const cells = blankRow(laneCount);
 
+  // Lanes a merge opened on this very row are drawn by their diagonal, not by
+  // a vertical bar — otherwise the row reads as `|\|` instead of `|\`.
+  const openedHere = new Set(
+    row.parentLanes.filter((lane, index) => index > 0 && !row.lanesBefore[lane]),
+  );
+
   row.lanesAfter.forEach((hash, lane) => {
-    if (hash) draw(cells, lane * LANE_WIDTH, laneColor(style, lane)('|'));
+    if (hash && !openedHere.has(lane)) draw(cells, lane * LANE_WIDTH, laneColor(style, lane)('|'));
   });
 
   // Route each parent from the commit's lane into the lane it landed in.
-  row.parentLanes.forEach((parentLane, index) => {
-    if (parentLane === row.lane) return;
+  for (const parentLane of row.parentLanes) {
+    if (parentLane === row.lane) continue;
     const color = laneColor(style, parentLane);
-    if (parentLane > row.lane) {
-      // Opens to the right: this is the second parent of a merge.
-      draw(cells, row.lane * LANE_WIDTH + 1, color('\\'));
-      draw(cells, parentLane * LANE_WIDTH, color('|'));
-    } else {
-      // Collapses to the left: the branch rejoins an existing lane.
-      draw(cells, parentLane * LANE_WIDTH + 1, color('/'));
-    }
-    if (index > 0) draw(cells, row.lane * LANE_WIDTH, laneColor(style, row.lane)('|'));
-  });
 
-  const line = cells.join('').replace(/\s+$/, '');
-  return line;
+    if (parentLane > row.lane) {
+      // Opens to the right: the second parent of a merge. A lane further out
+      // than the neighbouring one gets a second diagonal at its arrival
+      // column, leaving the lanes in between untouched.
+      draw(cells, row.lane * LANE_WIDTH + 1, color('\\'));
+      if (parentLane > row.lane + 1) draw(cells, parentLane * LANE_WIDTH - 1, color('\\'));
+    } else {
+      // Collapses to the left: this branch rejoins an existing lane. The
+      // horizontal run passes over any lanes in between without erasing them.
+      draw(cells, row.lane * LANE_WIDTH - 1, color('/'));
+      for (let column = parentLane * LANE_WIDTH + 1; column < row.lane * LANE_WIDTH - 1; column++) {
+        if (cells[column] === ' ') draw(cells, column, color('_'));
+      }
+    }
+  }
+
+  return cells.join('').replace(/\s+$/, '');
 }
 
 /** "(HEAD -> main, origin/main)" style annotation for a commit's refs. */
