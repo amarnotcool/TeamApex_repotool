@@ -14,12 +14,13 @@
  * `ask` keep working even if the graph module is gone entirely.
  */
 
+const fs = require('node:fs');
 const path = require('node:path');
 const reader = require('../src/git-reader');
 const { createStyle } = require('../src/ansi');
 
 /** Flags that take a value rather than being booleans. */
-const VALUED_FLAGS = new Set(['limit', 'context', 'repo', 'branch', 'sort', 'window']);
+const VALUED_FLAGS = new Set(['limit', 'context', 'repo', 'branch', 'sort', 'window', 'format', 'output']);
 
 function parseArgv(argv) {
   const positional = [];
@@ -99,34 +100,45 @@ const GLOBAL_OPTIONS = [
  */
 const COMMANDS = {
   graph: {
-    usage: 'repotool graph [--limit N] [--branch REF] [--no-dates]',
+    usage: 'repotool graph [--limit N] [--branch REF] [--no-dates] [--format ascii|svg] [--output PATH]',
     summary: 'draw the commit and merge history as a lane graph',
     options: [
       ['--limit N', 'read at most N commits'],
       ['--branch REF', 'graph one branch instead of every ref'],
       ['--no-dates', 'omit author dates'],
+      ['--format KIND', 'ascii (default) or svg'],
+      ['--output PATH', 'write to a file instead of stdout'],
     ],
-    examples: ['repotool graph', 'repotool graph --limit 20', 'repotool graph --branch main --no-dates'],
+    examples: [
+      'repotool graph',
+      'repotool graph --limit 20',
+      'repotool graph --branch main --no-dates',
+      'repotool graph --format svg --output history.svg',
+    ],
   },
   stats: {
-    usage: 'repotool stats [--limit N]',
+    usage: 'repotool stats [--limit N] [--json]',
     summary: 'one-screen overview: commits, contributors, branches, churn',
-    options: [['--limit N', 'read at most N commits of history']],
-    examples: ['repotool stats', 'repotool stats --repo ../other-project'],
+    options: [
+      ['--limit N', 'read at most N commits of history'],
+      ['--json', 'print the same figures as JSON, for scripts'],
+    ],
+    examples: ['repotool stats', 'repotool stats --repo ../other-project', 'repotool stats --json'],
   },
   hotspots: {
-    usage: 'repotool hotspots [--limit N] [--sort score|commits|churn|authors]',
+    usage: 'repotool hotspots [--limit N] [--sort score|commits|churn|authors] [--json]',
     summary: 'rank files by how much attention they attract',
     options: [
       ['--limit N', 'rows to show (default 10)'],
       ['--sort KEY', 'score (default), commits, churn or authors'],
+      ['--json', 'print the ranking as JSON, for scripts'],
     ],
-    examples: ['repotool hotspots', 'repotool hotspots --limit 25 --sort churn'],
+    examples: ['repotool hotspots', 'repotool hotspots --limit 25 --sort churn', 'repotool hotspots --json'],
   },
   ask: {
-    usage: 'repotool ask "<question>"',
+    usage: 'repotool ask "<question>" [--json]',
     summary: 'answer a fixed set of questions about the repository',
-    options: [],
+    options: [['--json', 'print the answer as JSON, for scripts']],
     examples: [
       'repotool ask "who last touched src/app.js"',
       'repotool ask "who works most on src/app.js"',
@@ -142,6 +154,15 @@ const COMMANDS = {
       ['--stat', 'summary only, no diff bodies'],
     ],
     examples: ['repotool diff HEAD~3 HEAD', 'repotool diff main feature --context 5', 'repotool diff HEAD~1 HEAD --stat'],
+  },
+  completion: {
+    usage: 'repotool completion <bash|zsh>',
+    summary: 'print a shell completion script for repotool',
+    options: [],
+    examples: [
+      'eval "$(repotool completion bash)"',
+      'repotool completion zsh > "${fpath[1]}/_repotool"',
+    ],
   },
 };
 
@@ -185,7 +206,10 @@ function questionList() {
 
 /** Top-level help. */
 function usage() {
-  const summaries = Object.entries(COMMANDS).map(([name, command]) => [name, command.summary]);
+  const summaries = [
+    ...Object.entries(COMMANDS).map(([name, command]) => [name, command.summary]),
+    ['help', 'show this help, or "repotool help <command>"'],
+  ];
 
   return `repotool — understand a git repository, with zero dependencies
 
@@ -194,7 +218,6 @@ Usage:
 
 Commands:
 ${optionBlock(summaries)}
-  help      show this help, or "repotool help <command>"
 
 Common options:
 ${optionBlock(GLOBAL_OPTIONS)}
@@ -206,9 +229,14 @@ Run "repotool help <command>" for arguments and examples.
 `;
 }
 
+const GRAPH_FORMATS = ['ascii', 'svg'];
+
 function commandGraph(flags, style) {
   const { buildGraph } = require('../src/graph/build-graph');
-  const { renderAscii } = require('../src/graph/render-ascii');
+
+  const format = choiceFlag(flags, 'format', GRAPH_FORMATS, 'ascii');
+  const output = typeof flags.output === 'string' ? flags.output : null;
+  if (flags.output === true) throw new UsageError('--output needs a file path.');
 
   const cwd = path.resolve(flags.repo || process.cwd());
   const limit = numericFlag(flags, 'limit');
@@ -224,19 +252,39 @@ function commandGraph(flags, style) {
     return 0;
   }
 
+  const graph = buildGraph(commits);
+
+  if (format === 'svg') {
+    const { renderSvg } = require('../src/graph/render-svg');
+    const svg = renderSvg(graph, { dates: !flags['no-dates'], title: `${path.basename(cwd)} — repotool graph` });
+    if (output) {
+      // The status line goes to stderr so that redirecting stdout still
+      // captures nothing but the document itself.
+      fs.writeFileSync(output, svg);
+      console.error(style.dim(`Wrote ${commits.length} commit(s) to ${output}`));
+    } else {
+      process.stdout.write(svg);
+    }
+    return 0;
+  }
+
+  const { renderAscii } = require('../src/graph/render-ascii');
   const location = head.empty
     ? 'empty repository'
     : head.detached
       ? `detached HEAD at ${head.hash.slice(0, 7)}`
       : `on branch ${head.branch}`;
+  const ascii = renderAscii(graph, { color: colorPreference(flags), dates: !flags['no-dates'] });
+
+  if (output) {
+    fs.writeFileSync(output, `${ascii}\n`);
+    console.error(style.dim(`Wrote ${commits.length} commit(s) to ${output}`));
+    return 0;
+  }
+
   console.log(style.dim(`${commits.length} commit(s), ${location}`));
   console.log();
-  console.log(
-    renderAscii(buildGraph(commits), {
-      color: colorPreference(flags),
-      dates: !flags['no-dates'],
-    }),
-  );
+  console.log(ascii);
   return 0;
 }
 
@@ -246,6 +294,12 @@ function commandStats(flags, style) {
 
   const cwd = path.resolve(flags.repo || process.cwd());
   const model = buildRepoModel({ cwd, limit: numericFlag(flags, 'limit') });
+
+  if (flags.json) {
+    console.log(JSON.stringify(require('../src/analysis/to-json').statsJson(model), null, 2));
+    return 0;
+  }
+
   console.log(renderStats(model, { color: colorPreference(flags) }));
   return 0;
 }
@@ -261,13 +315,20 @@ function commandHotspots(flags, style) {
 
   const cwd = path.resolve(flags.repo || process.cwd());
   const model = buildRepoModel({ cwd });
+
+  if (flags.json) {
+    const { hotspotsJson } = require('../src/analysis/to-json');
+    console.log(JSON.stringify(hotspotsJson(model, { limit: limit || 10, sort }), null, 2));
+    return 0;
+  }
+
   console.log(renderHotspots(model, { limit, sort, color: colorPreference(flags) }));
   return 0;
 }
 
 function commandAsk(positional, flags, style) {
   const { parseQuestion } = require('../src/query/parser');
-  const { answer } = require('../src/query/handlers');
+  const { answer, answerJson } = require('../src/query/handlers');
 
   const cwd = path.resolve(flags.repo || process.cwd());
   const question = positional.join(' ');
@@ -278,7 +339,31 @@ function commandAsk(positional, flags, style) {
   }
 
   const intent = parseQuestion(question);
+
+  if (flags.json) {
+    // Colour would corrupt the JSON, so the answer is built with a plain
+    // style regardless of what the terminal supports.
+    const plain = createStyle({ enabled: false });
+    console.log(JSON.stringify(answerJson(intent, { cwd, style: plain }), null, 2));
+    return 0;
+  }
+
   console.log(answer(intent, { cwd, style }));
+  return 0;
+}
+
+function commandCompletion(positional, flags, style) {
+  const { completionScript, SHELLS } = require('../src/completion');
+
+  const shell = positional[0];
+  if (!shell) {
+    throw new UsageError(`repotool completion needs a shell: ${SHELLS.join(' or ')}.`);
+  }
+  const script = completionScript(shell);
+  if (!script) {
+    throw new UsageError(`No completion script for ${shell}. Supported shells: ${SHELLS.join(', ')}.`);
+  }
+  process.stdout.write(script);
   return 0;
 }
 
@@ -385,6 +470,7 @@ function main(argv) {
     hotspots: () => commandHotspots(flags, style),
     ask: () => commandAsk(rest, flags, style),
     diff: () => commandDiff(rest, flags, style),
+    completion: () => commandCompletion(rest, flags, style),
   };
 
   if (!commands[command]) {

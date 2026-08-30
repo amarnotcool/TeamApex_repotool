@@ -4,8 +4,11 @@
  * handlers — intent to answer.
  *
  * Every handler receives the parsed intent plus a context ({ cwd, style })
- * and returns a printable string. Handlers query git-reader directly; they
- * never re-parse the question, and they never shell out to git themselves.
+ * and returns both renderings of one answer: `text`, the string a person
+ * reads, and `data`, the plain object `--json` prints. Both are produced from
+ * the same values in the same place, so the two can never disagree about the
+ * facts. Handlers query git-reader directly; they never re-parse the
+ * question, and they never shell out to git themselves.
  */
 
 const reader = require('../git-reader');
@@ -47,21 +50,65 @@ class QueryError extends Error {
   }
 }
 
+/** Pair the human answer with its machine-readable twin. */
+function result(text, data) {
+  return { text, data };
+}
+
+/** The subset of a commit we expose in JSON. These field names are stable. */
+function commitJson(commit) {
+  return {
+    hash: commit.hash,
+    shortHash: commit.shortHash,
+    subject: commit.subject,
+    authorName: commit.authorName,
+    authorEmail: commit.authorEmail,
+    authorDate: commit.authorDate,
+    isMerge: Boolean(commit.isMerge),
+  };
+}
+
+/** A period from activityComparison(), trimmed to the fields worth exporting. */
+function periodJson(period) {
+  if (!period) return null;
+  return {
+    commits: period.commits,
+    churn: period.churn,
+    days: period.rawDays,
+    from: period.from,
+    to: period.to,
+    commitsPerDay: period.perDay,
+  };
+}
+
 const handlers = {
   'who-touched'(intent, { cwd, style }) {
     const file = requireArgument(intent, 'a file path');
     const { commits } = reader.readCommits({ cwd, file, all: false, limit: 50 });
     if (!commits.length) {
-      return `No commits found touching ${style.bold(file)} — check the path is spelled as git records it.`;
+      return result(
+        `No commits found touching ${style.bold(file)} — check the path is spelled as git records it.`,
+        { file, found: false, commitCount: 0, authors: [], lastCommit: null },
+      );
     }
     const last = commits[0];
-    const others = new Set(commits.map((commit) => commit.authorName));
-    return [
-      `${style.bold(last.authorName)} last touched ${style.bold(file)}`,
-      `  commit  ${style.brightYellow(last.shortHash)}  ${last.subject}`,
-      `  when    ${formatDate(last.authorDate)}`,
-      `  history ${commits.length} commit(s) by ${others.size} author(s): ${[...others].join(', ')}`,
-    ].join('\n');
+    const others = [...new Set(commits.map((commit) => commit.authorName))];
+    return result(
+      [
+        `${style.bold(last.authorName)} last touched ${style.bold(file)}`,
+        `  commit  ${style.brightYellow(last.shortHash)}  ${last.subject}`,
+        `  when    ${formatDate(last.authorDate)}`,
+        `  history ${commits.length} commit(s) by ${others.length} author(s): ${others.join(', ')}`,
+      ].join('\n'),
+      {
+        file,
+        found: true,
+        lastAuthor: last.authorName,
+        lastCommit: commitJson(last),
+        commitCount: commits.length,
+        authors: others,
+      },
+    );
   },
 
   'when-was'(intent, { cwd, style }) {
@@ -69,62 +116,91 @@ const handlers = {
     const hash = reader.resolveRev(rev, { cwd });
     const { commits } = reader.readCommits({ cwd, revs: [hash], limit: 1, all: false });
     const commit = commits[0];
-    if (!commit) return `Could not read commit ${rev}.`;
-    return [
-      `${style.brightYellow(commit.shortHash)} ${commit.subject}`,
-      `  authored  ${formatDate(commit.authorDate)} by ${commit.authorName} <${commit.authorEmail}>`,
-      `  committed ${formatDate(commit.commitDate)}`,
-      commit.isMerge ? `  merge of ${commit.parents.length} parents` : null,
-    ]
-      .filter(Boolean)
-      .join('\n');
+    if (!commit) return result(`Could not read commit ${rev}.`, { rev, found: false, commit: null });
+    return result(
+      [
+        `${style.brightYellow(commit.shortHash)} ${commit.subject}`,
+        `  authored  ${formatDate(commit.authorDate)} by ${commit.authorName} <${commit.authorEmail}>`,
+        `  committed ${formatDate(commit.commitDate)}`,
+        commit.isMerge ? `  merge of ${commit.parents.length} parents` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      {
+        rev,
+        found: true,
+        commit: { ...commitJson(commit), commitDate: commit.commitDate, parents: commit.parents },
+      },
+    );
   },
 
   'count-by-author'(intent, { cwd, style }) {
     // Contributor counts come from the shared model, which reads the same
     // history this handler used to walk itself.
     const model = analysis().buildRepoModel({ cwd });
-    if (model.isEmpty) return 'This repository has no commits yet.';
+    if (model.isEmpty) return result('This repository has no commits yet.', { empty: true, authors: [] });
 
     const counts = new Map(model.contributors.map((author) => [author.name, author.commits]));
+    const asJson = (pairs) => pairs.map(([name, commits]) => ({ name, commits }));
 
     if (intent.argument) {
       const needle = intent.argument.toLowerCase();
       const matches = ranked(counts).filter(([name]) => name.toLowerCase().includes(needle));
       if (!matches.length) {
-        return `No author matching ${style.bold(intent.argument)}. Known authors: ${ranked(counts)
-          .map(([name]) => name)
-          .join(', ')}`;
+        return result(
+          `No author matching ${style.bold(intent.argument)}. Known authors: ${ranked(counts)
+            .map(([name]) => name)
+            .join(', ')}`,
+          { empty: false, filter: intent.argument, authors: [], knownAuthors: asJson(ranked(counts)) },
+        );
       }
-      return matches
-        .map(([name, count]) => `${style.bold(name)}: ${count} commit${count === 1 ? '' : 's'}`)
-        .join('\n');
+      return result(
+        matches
+          .map(([name, count]) => `${style.bold(name)}: ${count} commit${count === 1 ? '' : 's'}`)
+          .join('\n'),
+        { empty: false, filter: intent.argument, authors: asJson(matches) },
+      );
     }
 
-    return ranked(counts)
-      .map(([name, count]) => `${String(count).padStart(5)}  ${name}`)
-      .join('\n');
+    return result(
+      ranked(counts)
+        .map(([name, count]) => `${String(count).padStart(5)}  ${name}`)
+        .join('\n'),
+      { empty: false, filter: null, authors: asJson(ranked(counts)) },
+    );
   },
 
   'files-changed'(intent, { cwd, style }) {
     const rev = requireArgument(intent, 'a commit reference');
     const hash = reader.resolveRev(rev, { cwd });
     const files = reader.filesChanged(hash, { cwd });
-    if (!files.length) return `${style.brightYellow(rev)} changed no files (empty or merge commit).`;
-    return [`${files.length} file(s) changed in ${style.brightYellow(rev)}:`, ...files.map((f) => `  ${f}`)].join('\n');
+    if (!files.length) {
+      return result(`${style.brightYellow(rev)} changed no files (empty or merge commit).`, {
+        rev,
+        hash,
+        files: [],
+      });
+    }
+    return result(
+      [`${files.length} file(s) changed in ${style.brightYellow(rev)}:`, ...files.map((f) => `  ${f}`)].join('\n'),
+      { rev, hash, files },
+    );
   },
 
   'last-commits'(intent, { cwd, style }) {
     const count = Math.min(Number(intent.argument) || 10, 200);
     const { commits } = reader.readCommits({ cwd, limit: count });
-    if (!commits.length) return 'This repository has no commits yet.';
-    return commits
-      .map(
-        (commit) =>
-          `${style.brightYellow(commit.shortHash)}  ${String(commit.authorDate).slice(0, 10)}  ` +
-          `${style.cyan(commit.authorName)}  ${commit.subject}`,
-      )
-      .join('\n');
+    if (!commits.length) return result('This repository has no commits yet.', { empty: true, commits: [] });
+    return result(
+      commits
+        .map(
+          (commit) =>
+            `${style.brightYellow(commit.shortHash)}  ${String(commit.authorDate).slice(0, 10)}  ` +
+            `${style.cyan(commit.authorName)}  ${commit.subject}`,
+        )
+        .join('\n'),
+      { empty: false, requested: count, commits: commits.map(commitJson) },
+    );
   },
 
   'top-authors'(intent, context) {
@@ -132,31 +208,39 @@ const handlers = {
   },
 
   'busiest-file'(intent, { cwd, style }) {
-    const { commits } = reader.readCommits({ cwd, limit: 500 });
-    if (!commits.length) return 'This repository has no commits yet.';
+    // Per-file commit counts already exist in the shared model, read from one
+    // `git log --numstat`. This handler used to run `git show` per commit —
+    // 500 git processes, half a minute on a repository with real history, and
+    // an answer that could disagree with `repotool hotspots` because it was
+    // counted a different way. Same numbers, one pass.
+    const model = analysis().buildRepoModel({ cwd });
+    if (model.isEmpty) return result('This repository has no commits yet.', { empty: true, files: [] });
 
-    const counts = new Map();
-    for (const commit of commits) {
-      for (const file of reader.filesChanged(commit.hash, { cwd })) {
-        counts.set(file, (counts.get(file) || 0) + 1);
-      }
-    }
-    if (!counts.size) return 'No file changes recorded.';
+    const ranking = analysis().rankHotspots(model, { sort: 'commits' }).slice(0, 10);
+    if (!ranking.length) return result('No file changes recorded.', { empty: false, files: [] });
 
-    return ranked(counts)
-      .slice(0, 10)
-      .map(([file, count]) => `${String(count).padStart(5)}  ${style.bold(file)}`)
-      .join('\n');
+    return result(
+      ranking.map((file) => `${String(file.commits).padStart(5)}  ${style.bold(file.path)}`).join('\n'),
+      {
+        empty: false,
+        files: ranking.map((file) => ({ path: file.path, commits: file.commits, churn: file.churn })),
+      },
+    );
   },
 
   'file-owner'(intent, { cwd, style }) {
     const wanted = requireArgument(intent, 'a file or directory path');
     const model = analysis().buildRepoModel({ cwd });
-    if (model.isEmpty) return 'This repository has no commits yet.';
+    if (model.isEmpty) return result('This repository has no commits yet.', { empty: true, path: null });
 
     const matches = analysis().matchFiles(model, wanted);
     if (!matches.length) {
-      return `No tracked file matches ${style.bold(wanted)} — check the path as git records it.`;
+      return result(`No tracked file matches ${style.bold(wanted)} — check the path as git records it.`, {
+        empty: false,
+        query: wanted,
+        path: null,
+        matches: [],
+      });
     }
 
     const path = matches[0];
@@ -185,12 +269,28 @@ const handlers = {
       lines.push(style.dim(`  ${matches.length - 1} other path(s) matched; showing the busiest.`));
     }
 
-    return lines.join('\n');
+    return result(lines.join('\n'), {
+      empty: false,
+      query: wanted,
+      path,
+      owner: { name: leader.name, commits: leader.commits },
+      file: {
+        path,
+        commits: file.commits,
+        authors: file.authorCount,
+        added: file.added,
+        removed: file.removed,
+        churn: file.churn,
+        lastDate: file.lastDate,
+      },
+      contributors,
+      matches,
+    });
   },
 
   'recent-activity'(intent, { cwd, style }) {
     const model = analysis().buildRepoModel({ cwd });
-    if (model.isEmpty) return 'This repository has no commits yet.';
+    if (model.isEmpty) return result('This repository has no commits yet.', { empty: true });
 
     const requested = Number(intent.argument);
     const windowSize = Number.isFinite(requested) && requested > 0 ? requested : undefined;
@@ -225,12 +325,19 @@ const handlers = {
       lines.push(`    ${style.brightYellow(commit.shortHash)}  ${style.cyan(commit.authorName)}  ${commit.subject}`);
     }
 
-    return lines.join('\n');
+    return result(lines.join('\n'), {
+      empty: false,
+      totalCommits: model.totalCommits,
+      recent: periodJson(recent),
+      topFiles: activity.topRecentFiles.slice(0, 5),
+      topAuthors: activity.topRecentAuthors.slice(0, 3),
+      latestCommits: model.commits.slice(0, 3).map(commitJson),
+    });
   },
 
   'change-analysis'(intent, { cwd, style }) {
     const model = analysis().buildRepoModel({ cwd });
-    if (model.isEmpty) return 'This repository has no commits yet.';
+    if (model.isEmpty) return result('This repository has no commits yet.', { empty: true });
 
     const activity = analysis().activityComparison(model);
     const { recent, baseline, concentration } = activity;
@@ -291,7 +398,21 @@ const handlers = {
       style.dim('  Every figure above is counted directly from git history — no estimation, no model.'),
     );
 
-    return lines.join('\n');
+    return result(lines.join('\n'), {
+      empty: false,
+      recent: periodJson(recent),
+      baseline: periodJson(baseline),
+      comparableRates: activity.comparableRates,
+      rateRatio: activity.rateRatio,
+      concentration: {
+        files: concentration.files,
+        churn: concentration.churn,
+        share: concentration.share,
+        paths: activity.topRecentFiles.slice(0, concentration.files).map((file) => file.path),
+      },
+      topFiles: activity.topRecentFiles.slice(0, 5),
+      topAuthors: activity.topRecentAuthors.slice(0, 3),
+    });
   },
 
   'branch-list'(intent, { cwd, style }) {
@@ -299,7 +420,7 @@ const handlers = {
     // understand a repository; git-reader owns the ref query itself.
     const { local, remote, all } = reader.branches({ cwd });
     const current = reader.head(cwd);
-    if (!all.length) return 'No branches yet.';
+    if (!all.length) return result('No branches yet.', { current: null, local: [], remote: [] });
 
     const lines = [];
     for (const branch of local) {
@@ -311,18 +432,43 @@ const handlers = {
     }
 
     const summary = `${local.length} local, ${remote.length} remote`;
-    return [...lines, style.dim(summary)].join('\n');
+    return result([...lines, style.dim(summary)].join('\n'), {
+      current: current.branch || null,
+      local,
+      remote,
+    });
   },
 };
 
-/** Run a parsed intent. Throws QueryError with guidance when unsupported. */
-function answer(intent, context) {
+/** Run a parsed intent, returning { text, data }. */
+function answerFull(intent, context) {
   if (!intent || !handlers[intent.name]) {
     throw new QueryError(
       ['I do not understand that question yet. I can answer:', ...supportedQuestions().map((q) => `  - ${q}`)].join('\n'),
     );
   }
-  return handlers[intent.name](intent, context);
+  const produced = handlers[intent.name](intent, context);
+  // Belt and braces: a handler that returns a bare string still works.
+  return typeof produced === 'string' ? { text: produced, data: null } : produced;
 }
 
-module.exports = { answer, handlers, QueryError };
+/** Run a parsed intent. Throws QueryError with guidance when unsupported. */
+function answer(intent, context) {
+  return answerFull(intent, context).text;
+}
+
+/**
+ * The `--json` shape for one question: the answer's data, wrapped in enough
+ * context that a script can tell what it asked without keeping its own note.
+ */
+function answerJson(intent, context) {
+  const { data } = answerFull(intent, context);
+  return {
+    question: intent.question,
+    intent: intent.name,
+    argument: intent.argument,
+    answer: data,
+  };
+}
+
+module.exports = { answer, answerFull, answerJson, handlers, QueryError };

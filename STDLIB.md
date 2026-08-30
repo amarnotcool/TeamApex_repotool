@@ -199,6 +199,61 @@ matching the most groups wins.
   covers `src/`, `bin/` and `test/`, and that is itself tested — the suite
   plants a real third-party import and asserts the checker fails.
 
+### `gitgraph.js`, `d3`, `svg.js` → our own SVG serialiser
+`src/graph/render-svg.js`
+
+An SVG file is XML text, so `--format svg` builds the string directly:
+`<path>` for lane edges, `<circle>`/`<polygon>` for commit, root and merge
+nodes, `<text>` with per-`tspan` colours for labels.
+
+- **Lost:** a layout engine, hit-testing, interactivity, and a library's
+  accumulated knowledge of font metrics — our canvas width comes from a
+  monospace advance constant, so an unusual font can overflow the viewBox.
+- **Gained:** the SVG renderer reads the *same* lane assignment the ASCII
+  renderer does, so the two views cannot disagree about the shape of history.
+  A drawing library would have wanted its own graph model, which is exactly
+  the duplication that lets two renderings drift apart.
+
+### `diff-match-patch`, `jsdiff`'s `diffWords` → the Myers pass we already have
+`src/diff/render-diff.js`
+
+Intra-line highlighting runs `myers.diff` a second time over the two lines'
+characters instead of importing a second algorithm.
+
+- **Lost:** word- and sentence-level heuristics, and `diff-match-patch`'s
+  semantic cleanup, which merges trivial fragments into readable spans. We
+  approximate that cleanup with two rules — a similarity floor and a cap on how
+  many separate changed runs a line may have — tuned by looking at real diffs
+  in express, axios and undici rather than by theory.
+- **Gained:** one diff implementation in the project, used at two granularities.
+  There is nothing that could disagree with the line-level result.
+
+### `omelette`, `tabtab`, `commander`'s completion generator → generated scripts
+`src/completion.js`
+
+`repotool completion bash|zsh` prints a script generated from one description
+of the CLI's surface.
+
+- **Lost:** dynamic completion (asking the running tool for candidate branch or
+  file names mid-completion), fish and PowerShell support, and installation
+  helpers that edit the user's shell profile.
+- **Gained:** commands, flags and static values live in one table, so the bash
+  and zsh scripts cannot drift apart from each other or from the tool. The
+  generated bash script is checked with `bash -n` in the test suite.
+
+### `xml2js`, `fast-xml-parser`, `jsdom` → a small XML checker, for tests only
+`test/xml.js`
+
+Node has no XML parser, and asserting our hand-built SVG is well-formed needs
+one.
+
+- **Lost:** namespaces, DTDs, entity expansion beyond the five predefined ones,
+  and CDATA. It is a checker, not a general parser.
+- **Gained:** the assertion "this document parses" is honest without adding a
+  devDependency, which would have made the zero-dependency claim runtime-only.
+  It fails on exactly what a hand-written serialiser gets wrong: unbalanced
+  tags, unquoted attributes, and unescaped `&` or `<`.
+
 ---
 
 Node built-ins actually used: `child_process`, `fs`, `os`, `path`, `process`,

@@ -59,7 +59,25 @@ M |    0eb3d2e 2026-08-20 Ada Lovelace Merge feature into main
 o      231d066 2026-08-20 Ada Lovelace Initial commit
 ```
 
-Flags: `--limit N`, `--branch REF`, `--no-dates`, `--repo PATH`, `--no-color`.
+Flags: `--limit N`, `--branch REF`, `--no-dates`, `--format ascii|svg`,
+`--output PATH`, `--repo PATH`, `--no-color`.
+
+#### SVG export
+
+`--format svg` renders the *same* layout through a second renderer — commit,
+merge and root nodes, lane colours, connectors and labels — as an SVG document
+on stdout, or into a file with `--output`:
+
+```sh
+repotool graph --format svg > history.svg
+repotool graph --format svg --output history.svg     # status line on stderr
+repotool graph --branch main --limit 50 --format svg --output main.svg
+```
+
+Lane assignment happens once, in `src/graph/build-graph.js`; the ASCII and SVG
+renderers only draw what it decided, so they cannot disagree about structure.
+A parent outside the loaded history (`--limit`, or a shallow clone) is drawn as
+a dashed stub rather than dropped.
 
 ### `repotool stats`
 
@@ -138,6 +156,95 @@ repotool diff main feature --context 5
 repotool diff HEAD~1 HEAD --stat
 ```
 
+Lines that were *edited* rather than replaced get a second, character-level
+Myers pass — the same algorithm, run again over the two lines' characters — and
+only the span that actually changed is underlined inside the usual red/green
+line. Lines with less than 30% of their characters in common are treated as
+replacements and left whole-line coloured, because character-level detail on
+unrelated lines is noise. With `--no-color` (or `NO_COLOR`) the extra pass is
+skipped entirely: there is nothing to show it with.
+
+## Scripting / JSON output
+
+`stats`, `hotspots` and `ask` take `--json`. The JSON goes to stdout and
+nothing else does, errors still go to stderr, and exit codes are unchanged — so
+`repotool stats --json | …` is safe to pipe. `graph` and `diff` have no
+`--json`: their value is the picture, and `--format svg` is graph's structured
+export.
+
+```sh
+repotool stats --json
+repotool hotspots --json --limit 25 --sort churn
+repotool ask "who last touched src/app.js" --json
+```
+
+Field names are stable; new fields may be added, existing ones are not renamed.
+
+`stats --json`:
+
+```
+{
+  "repository": { "path", "name", "head": { "empty", "detached", "branch", "hash" } },
+  "empty":        boolean,
+  "commits":      { "total", "merges", "first", "last", "spanDays" },
+  "contributors": [ { "name", "email", "commits", "merges", "added", "removed",
+                      "firstDate", "lastDate" } ],
+  "branches":     { "local": [name], "remote": [name] },
+  "totals":       { "filesTouched", "added", "removed", "churn" },
+  "topFiles":     [ file ]
+}
+```
+
+`hotspots --json`:
+
+```
+{
+  "repository": { … as above … },
+  "empty":      boolean,
+  "sort":       "score" | "commits" | "churn" | "authors",
+  "weights":    { "commits", "churn", "authors" },
+  "totalFiles": number,
+  "files":      [ { "rank", "score", …file } ]
+}
+```
+
+A `file` everywhere above is
+`{ path, commits, authors, added, removed, churn, binary, firstDate, lastDate }`.
+
+`ask --json` wraps the answer in the question that produced it, so a script
+does not have to keep its own note of what it asked:
+
+```
+{
+  "question": "who last touched src/app.js",
+  "intent":   "who-touched",
+  "argument": "src/app.js",
+  "answer":   { … shape depends on the intent … }
+}
+```
+
+The text and JSON answers are built side by side from the same values in
+`src/query/handlers.js`, so the two can never report different facts.
+
+## Shell completion
+
+```sh
+# bash — for the current shell
+eval "$(repotool completion bash)"
+
+# bash — permanently
+repotool completion bash > ~/.local/share/bash-completion/completions/repotool
+
+# zsh — into a directory on your fpath, then restart the shell
+repotool completion zsh > "${fpath[1]}/_repotool"
+```
+
+Both scripts complete commands, each command's flags, and the fixed values a
+flag accepts (`--sort score|commits|churn|authors`, `--format ascii|svg`);
+`--repo` completes directories and `--output` completes files. They are
+generated from one description of the CLI surface in `src/completion.js`, so
+the two shells cannot drift apart from each other or from the tool.
+
 ## Zero-dependency proof
 
 ```sh
@@ -160,25 +267,33 @@ npm test        # or: node --test "test/*.test.js"
 
 The suite builds real throwaway git repositories and covers empty repos, a
 single root commit, merge commits, detached HEAD, malformed git output, a
-randomised round-trip property for the diff algorithm, and the dependency
+randomised round-trip property for the diff algorithm, SVG well-formedness
+(checked with a small XML parser written for the tests, since Node has none),
+`--json` shapes, generated completion scripts (`bash -n`), and the dependency
 proof itself — planting a third-party import to confirm the checker fails.
 
 ## Design
 
-Five commands over one shared reading layer. Feature modules never reach into
+Six commands over one shared reading layer. Feature modules never reach into
 each other's internals.
 
 ```
 bin/repotool.js       argv routing, per-command help
 src/index.js          public API for using repotool as a library
 src/git-reader.js     the only file that talks to git
-src/analysis/         shared repo model + stats and hotspots reports
-src/graph/            DAG layout + ASCII renderer
-src/query/            question -> intent -> answer
+src/analysis/         shared repo model + stats, hotspots and JSON renderers
+src/graph/            DAG layout + ASCII and SVG renderers
+src/query/            question -> intent -> answer (text and JSON together)
 src/diff/             Myers diff + unified-diff renderer
+src/completion.js     generated bash and zsh completion scripts
 src/format.js         column alignment, number grouping, relative dates
 src/ansi.js           escape codes, TTY/NO_COLOR aware
 ```
+
+Every output format is a renderer over a shared model, never a second
+derivation of the same facts: ASCII and SVG share one lane layout, the human
+and JSON reports share one repo model, and each `ask` answer produces its text
+and its JSON side by side.
 
 `src/analysis/repo-model.js` reads the history once — commits, contributors,
 branches and per-file churn, the last of these from a single
@@ -191,10 +306,16 @@ a problem in one feature cannot stop the other two from running.
 ## Use it as a library
 
 ```js
-const { readCommits, buildGraph, renderAscii, diffLines, parseQuestion } = require('@amarnotcool/repotool');
+const {
+  readCommits, buildGraph, renderAscii, renderSvg,
+  buildRepoModel, statsJson, hotspotsJson,
+  diffLines, parseQuestion, answerQuestionJson,
+} = require('@amarnotcool/repotool');
 
 const { commits } = readCommits({ cwd: '/path/to/repo' });
 console.log(renderAscii(buildGraph(commits)));
+console.log(renderSvg(buildGraph(commits)));
+console.log(statsJson(buildRepoModel({ cwd: '/path/to/repo' })));
 ```
 
 `git-reader` shells out to the `git` binary for raw data only — commit

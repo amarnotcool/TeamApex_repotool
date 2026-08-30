@@ -49,21 +49,26 @@ lazy(api, 'analysis', () => ({
   ...require('./analysis/repo-model'),
   ...require('./analysis/render-stats'),
   ...require('./analysis/render-hotspots'),
+  ...require('./analysis/to-json'),
 }));
 lazy(api, 'buildRepoModel', () => require('./analysis/repo-model').buildRepoModel);
 lazy(api, 'rankHotspots', () => require('./analysis/repo-model').rankHotspots);
 lazy(api, 'activityComparison', () => require('./analysis/repo-model').activityComparison);
 lazy(api, 'renderStats', () => require('./analysis/render-stats').renderStats);
 lazy(api, 'renderHotspots', () => require('./analysis/render-hotspots').renderHotspots);
+lazy(api, 'statsJson', () => require('./analysis/to-json').statsJson);
+lazy(api, 'hotspotsJson', () => require('./analysis/to-json').hotspotsJson);
 
 // --- graph -----------------------------------------------------------------
 lazy(api, 'graph', () => ({
   ...require('./graph/build-graph'),
   ...require('./graph/render-ascii'),
+  ...require('./graph/render-svg'),
 }));
 lazy(api, 'buildGraph', () => require('./graph/build-graph').buildGraph);
 lazy(api, 'topoSort', () => require('./graph/build-graph').topoSort);
 lazy(api, 'renderAscii', () => require('./graph/render-ascii').renderAscii);
+lazy(api, 'renderSvg', () => require('./graph/render-svg').renderSvg);
 
 // --- query -----------------------------------------------------------------
 lazy(api, 'query', () => ({
@@ -73,6 +78,7 @@ lazy(api, 'query', () => ({
 lazy(api, 'parseQuestion', () => require('./query/parser').parseQuestion);
 lazy(api, 'supportedQuestions', () => require('./query/parser').supportedQuestions);
 lazy(api, 'answerQuestion', () => require('./query/handlers').answer);
+lazy(api, 'answerQuestionJson', () => require('./query/handlers').answerJson);
 lazy(api, 'QueryError', () => require('./query/handlers').QueryError);
 
 // --- diff ------------------------------------------------------------------
@@ -84,6 +90,10 @@ lazy(api, 'myersDiff', () => require('./diff/myers').diff);
 lazy(api, 'diffLines', () => require('./diff/myers').diffLines);
 lazy(api, 'toHunks', () => require('./diff/myers').toHunks);
 lazy(api, 'renderFileDiff', () => require('./diff/render-diff').renderFileDiff);
+
+// --- completion ------------------------------------------------------------
+lazy(api, 'completion', () => require('./completion'));
+lazy(api, 'completionScript', () => require('./completion').completionScript);
 
 // --- output ----------------------------------------------------------------
 lazy(api, 'format', () => require('./format'));
