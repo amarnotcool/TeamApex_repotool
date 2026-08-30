@@ -7,14 +7,30 @@ Node.js standard library and nothing else. No `chalk`, no `commander`, no
 
 ## Run it
 
-No build step, no install step:
+Nothing to install, nothing to build — run it straight from the registry
+inside any git repository:
+
+```sh
+npx @amarnotcool/repotool graph
+```
+
+Or install it once and use the short command everywhere:
+
+```sh
+npm i -g @amarnotcool/repotool
+repotool graph
+```
+
+That global install pulls exactly one package: this one. `dependencies` is
+empty, so there is no transitive tree behind it.
+
+From a clone, no install step at all:
 
 ```sh
 node bin/repotool.js graph
 ```
 
 Node 18 or newer and a `git` binary on `PATH` are the only requirements.
-Optionally `npm link` to get a `repotool` command on your path.
 
 ## Commands
 
