@@ -144,3 +144,187 @@ test('the public API produces the same graph as the CLI path', () => {
     cleanup(repo);
   }
 });
+
+/** Run the CLI capturing stdout and stderr separately. */
+function runSplit(args, cwd) {
+  const result = require('node:child_process').spawnSync(
+    process.execPath,
+    [path.join(PROJECT_ROOT, 'bin', 'repotool.js'), ...args],
+    { cwd, encoding: 'utf8', windowsHide: true },
+  );
+  return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
+}
+
+function busyRepo() {
+  const dir = makeRepo();
+  commit(dir, 'a.js', 'one\n', 'First');
+  commit(dir, 'a.js', 'one\ntwo\n', 'Second', 'Grace Hopper');
+  commit(dir, 'b.js', 'b\n', 'Third');
+  return dir;
+}
+
+test('every command prints its results to stdout and nothing to stderr', () => {
+  const repo = busyRepo();
+  try {
+    const commands = [
+      ['graph', '--no-color'],
+      ['stats', '--no-color'],
+      ['hotspots', '--no-color'],
+      ['ask', 'who are the top contributors', '--no-color'],
+      ['diff', 'HEAD~1', 'HEAD', '--no-color'],
+    ];
+
+    for (const args of commands) {
+      const result = runSplit(args, repo);
+      assert.equal(result.status, 0, `${args[0]} exited ${result.status}: ${result.stderr}`);
+      assert.ok(result.stdout.trim().length > 0, `${args[0]} wrote nothing to stdout`);
+      assert.equal(result.stderr, '', `${args[0]} polluted stderr: ${result.stderr}`);
+    }
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('help goes to stdout and exits 0; a bare invocation is a usage error', () => {
+  const repo = busyRepo();
+  try {
+    const help = runSplit(['help'], repo);
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /Usage:/);
+    assert.equal(help.stderr, '');
+
+    for (const command of ['graph', 'stats', 'hotspots', 'ask', 'diff']) {
+      const perCommand = runSplit(['help', command], repo);
+      assert.equal(perCommand.status, 0, `help ${command} exited ${perCommand.status}`);
+      assert.match(perCommand.stdout, new RegExp(`repotool ${command}`), `help ${command} lacks a title`);
+      assert.match(perCommand.stdout, /Usage:/, `help ${command} lacks usage`);
+      assert.match(perCommand.stdout, /Examples:/, `help ${command} lacks examples`);
+
+      const viaFlag = runSplit([command, '--help'], repo);
+      assert.equal(viaFlag.status, 0);
+      assert.equal(viaFlag.stdout, perCommand.stdout, `${command} --help must match help ${command}`);
+    }
+
+    // No command at all is a usage error: stderr, non-zero.
+    const bare = runSplit([], repo);
+    assert.equal(bare.status, 2);
+    assert.equal(bare.stdout, '');
+    assert.match(bare.stderr, /Usage:/);
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('bad arguments exit 2 with the message on stderr', () => {
+  const repo = busyRepo();
+  try {
+    const cases = [
+      [['hotspots', '--sort', 'nonsense'], /--sort must be one of/],
+      [['hotspots', '--limit', 'abc'], /--limit needs a number/],
+      [['stats', '--limit', '-4'], /--limit needs a number/],
+      [['graph', '--limit', 'lots'], /--limit needs a number/],
+      [['diff'], /needs at least one revision/],
+      [['ask'], /needs a question/],
+    ];
+
+    for (const [args, pattern] of cases) {
+      const result = runSplit(args, repo);
+      assert.equal(result.status, 2, `${args.join(' ')} should exit 2, got ${result.status}`);
+      assert.match(result.stderr, pattern, args.join(' '));
+      assert.equal(result.stdout, '', `${args.join(' ')} should print nothing to stdout`);
+    }
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('unknown commands and unanswerable questions exit non-zero via stderr', () => {
+  const repo = busyRepo();
+  try {
+    const unknown = runSplit(['frobnicate'], repo);
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /Unknown command: frobnicate/);
+    assert.equal(unknown.stdout, '');
+
+    const unanswerable = runSplit(['ask', 'what is the weather', '--no-color'], repo);
+    assert.equal(unanswerable.status, 1);
+    assert.match(unanswerable.stderr, /I can answer:/);
+    assert.equal(unanswerable.stdout, '');
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('running outside a repository fails cleanly for every command', () => {
+  const outside = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'repotool-bare-'));
+  try {
+    for (const args of [['graph'], ['stats'], ['hotspots'], ['ask', 'who are the top contributors'], ['diff', 'HEAD']]) {
+      const result = runSplit([...args, '--no-color'], outside);
+      assert.equal(result.status, 1, `${args[0]} should exit 1 outside a repository`);
+      assert.match(result.stderr, /not a git repository|unknown revision/i, args[0]);
+      assert.ok(!result.stderr.includes('at Object.'), `${args[0]} dumped a stack trace`);
+    }
+  } finally {
+    cleanup(outside);
+  }
+});
+
+test('stats and hotspots respect --no-color and a non-TTY stdout', () => {
+  const repo = busyRepo();
+  try {
+    for (const command of ['stats', 'hotspots', 'graph']) {
+      const explicit = runSplit([command, '--no-color'], repo);
+      assert.ok(!explicit.stdout.includes('\x1b['), `${command} --no-color emitted escape codes`);
+
+      // A piped (non-TTY) stdout must be plain even without the flag.
+      const piped = runSplit([command], repo);
+      assert.ok(!piped.stdout.includes('\x1b['), `${command} coloured a non-TTY stream`);
+
+      // ...and --color forces colour on regardless of the stream.
+      const forced = runSplit([command, '--color'], repo);
+      assert.ok(forced.stdout.includes('\x1b['), `${command} --color produced no escape codes`);
+    }
+  } finally {
+    cleanup(repo);
+  }
+});
+
+test('stats and hotspots work on an empty repository and a detached HEAD', () => {
+  const empty = makeRepo();
+  const detached = busyRepo();
+  try {
+    for (const command of ['stats', 'hotspots']) {
+      const onEmpty = runSplit([command, '--no-color'], empty);
+      assert.equal(onEmpty.status, 0, `${command} should succeed on an empty repository`);
+      assert.match(onEmpty.stdout, /No commits yet/);
+      assert.equal(onEmpty.stderr, '');
+    }
+
+    require('./helpers').git(detached, ['checkout', '-q', '--detach', 'HEAD~1']);
+    const onDetached = runSplit(['stats', '--no-color'], detached);
+    assert.equal(onDetached.status, 0);
+    assert.match(onDetached.stdout, /detached HEAD/);
+  } finally {
+    cleanup(empty);
+    cleanup(detached);
+  }
+});
+
+test('the public API exposes the analysis layer alongside the feature modules', () => {
+  const api = require('../src/index');
+  const repo = busyRepo();
+  try {
+    for (const name of ['buildRepoModel', 'rankHotspots', 'activityComparison', 'renderStats', 'renderHotspots']) {
+      assert.equal(typeof api[name], 'function', `${name} should be exported`);
+    }
+    assert.ok(Object.keys(api.analysis).length > 0);
+    assert.equal(typeof api.format.count, 'function');
+
+    const built = api.buildRepoModel({ cwd: repo });
+    assert.equal(built.totalCommits, 3);
+    assert.match(api.renderStats(built, { color: false }), /commits/);
+    assert.match(api.renderHotspots(built, { color: false }), /rank/);
+  } finally {
+    cleanup(repo);
+  }
+});

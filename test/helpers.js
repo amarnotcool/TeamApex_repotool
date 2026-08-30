@@ -12,8 +12,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-function run(cwd, args) {
-  execFileSync('git', args, { cwd, stdio: 'ignore', windowsHide: true });
+function run(cwd, args, env) {
+  execFileSync('git', args, {
+    cwd,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: env ? { ...process.env, ...env } : process.env,
+  });
 }
 
 /** Create an empty repository in a fresh temp directory. */
@@ -34,6 +39,20 @@ function commit(dir, file, contents, message, author) {
   run(dir, ['commit', '-q', '-m', message]);
 }
 
+/**
+ * Commit with an explicit timestamp, for tests about rates over time.
+ * `when` is anything git accepts, e.g. "2026-01-05T12:00:00".
+ */
+function commitAt(dir, when, file, contents, message, author) {
+  fs.writeFileSync(path.join(dir, file), contents);
+  if (author) run(dir, ['config', 'user.name', author]);
+  run(dir, ['add', '.']);
+  run(dir, ['commit', '-q', '-m', message], {
+    GIT_AUTHOR_DATE: when,
+    GIT_COMMITTER_DATE: when,
+  });
+}
+
 function git(dir, args) {
   run(dir, args);
 }
@@ -42,4 +61,4 @@ function cleanup(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-module.exports = { makeRepo, commit, git, cleanup };
+module.exports = { makeRepo, commit, commitAt, git, cleanup };

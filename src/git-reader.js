@@ -168,6 +168,120 @@ function parseLog(raw) {
   return commits;
 }
 
+/**
+ * Local and remote-tracking branches, in one `for-each-ref` call.
+ * Each entry is { fullRef, name, hash, remote }.
+ */
+function branches({ cwd = process.cwd() } = {}) {
+  const raw = git(
+    ['for-each-ref', '--format=%(refname)\t%(refname:short)\t%(objectname:short)', 'refs/heads', 'refs/remotes'],
+    { cwd, allowFailure: true },
+  );
+  if (!raw || !raw.trim()) return { local: [], remote: [], all: [] };
+
+  const all = raw
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => {
+      const [fullRef, name, hash] = line.split('\t');
+      return { fullRef, name, hash, remote: fullRef.startsWith('refs/remotes/') };
+    })
+    // A remote's HEAD pointer is an alias, not a branch of its own. Match on
+    // the full ref: refs/remotes/origin/HEAD shortens to plain "origin".
+    .filter((branch) => !branch.fullRef.endsWith('/HEAD'));
+
+  return {
+    local: all.filter((branch) => !branch.remote),
+    remote: all.filter((branch) => branch.remote),
+    all,
+  };
+}
+
+/**
+ * Normalise the path shapes `--numstat` uses for renames:
+ *   "old.js => new.js"          -> "new.js"
+ *   "src/{old => new}/file.js"  -> "src/new/file.js"
+ * A rename should count towards the file's current name, not a phantom one.
+ */
+function normaliseNumstatPath(raw) {
+  const path = raw.trim();
+  if (!path.includes('=>')) return path;
+
+  const braced = path.match(/^(.*)\{(.*?) => (.*?)\}(.*)$/);
+  if (braced) {
+    const [, prefix, , after, suffix] = braced;
+    return `${prefix}${after}${suffix}`.replace(/\/{2,}/g, '/');
+  }
+  return path.split('=>').pop().trim();
+}
+
+/**
+ * Full history with per-file line counts, in a single git invocation.
+ *
+ * `--numstat` appends "<added>\t<removed>\t<path>" lines under each commit,
+ * which is the only way to get churn for a whole repository without running
+ * one diff per commit. Binary files report "-" for both counts.
+ *
+ * Merges carry no numstat output by default, so their changes are attributed
+ * to the commits that actually introduced them rather than counted twice.
+ *
+ * @returns {Array} commits, newest first, each with a `files` array
+ */
+function readHistoryWithStats({ cwd = process.cwd(), all = true, limit } = {}) {
+  if (!isRepo(cwd)) {
+    throw new GitError(`not a git repository: ${cwd}`, { code: 'NOT_A_REPO' });
+  }
+
+  const format = LOG_FIELDS.map(([placeholder]) => placeholder).join(FIELD);
+  const args = ['log', '--parents', '--numstat', `--pretty=format:${RECORD}${format}`];
+  if (all) args.push('--all');
+  if (typeof limit === 'number' && limit > 0) args.push(`--max-count=${limit}`);
+
+  const raw = git(args, { cwd, allowFailure: true });
+  if (raw === null) return [];
+
+  const commits = [];
+  for (const segment of raw.split(RECORD)) {
+    if (!segment.trim()) continue;
+
+    const lines = segment.split('\n');
+    const parts = lines[0].split(FIELD);
+    if (parts.length < LOG_FIELDS.length) continue; // malformed record: skip it
+
+    const commit = {};
+    LOG_FIELDS.forEach(([, key], index) => {
+      commit[key] = parts[index];
+    });
+    commit.parents = commit.parentsRaw.trim() ? commit.parentsRaw.trim().split(/\s+/) : [];
+    commit.refs = parseRefs(commit.refsRaw);
+    commit.isMerge = commit.parents.length > 1;
+    commit.isRoot = commit.parents.length === 0;
+    delete commit.parentsRaw;
+    delete commit.refsRaw;
+
+    commit.files = [];
+    commit.added = 0;
+    commit.removed = 0;
+
+    for (const line of lines.slice(1)) {
+      if (!line.trim()) continue;
+      const columns = line.split('\t');
+      if (columns.length < 3) continue;
+
+      const binary = columns[0] === '-' || columns[1] === '-';
+      const added = binary ? 0 : Number(columns[0]) || 0;
+      const removed = binary ? 0 : Number(columns[1]) || 0;
+      commit.files.push({ path: normaliseNumstatPath(columns.slice(2).join('\t')), added, removed, binary });
+      commit.added += added;
+      commit.removed += removed;
+    }
+
+    commits.push(commit);
+  }
+
+  return commits;
+}
+
 /** Files touched by a single commit (for a merge, files differing from parent 1). */
 function filesChanged(rev, { cwd = process.cwd() } = {}) {
   const out = git(['show', '--name-only', '--pretty=format:', '--first-parent', rev], {
@@ -287,6 +401,9 @@ module.exports = {
   parseLog,
   parseRefs,
   filesChanged,
+  branches,
+  readHistoryWithStats,
+  normaliseNumstatPath,
   resolveRev,
   fileAtCommit,
   changedPaths,

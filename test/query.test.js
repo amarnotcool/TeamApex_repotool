@@ -7,7 +7,7 @@ const { parseQuestion, supportedQuestions } = require('../src/query/parser');
 const { answer, QueryError } = require('../src/query/handlers');
 const { createStyle } = require('../src/ansi');
 const reader = require('../src/git-reader');
-const { makeRepo, commit, git, cleanup } = require('./helpers');
+const { makeRepo, commit, commitAt, git, cleanup } = require('./helpers');
 
 const style = createStyle({ enabled: false });
 
@@ -162,4 +162,134 @@ test('an unknown revision surfaces a GitError', () => {
   } finally {
     cleanup(dir);
   }
+});
+
+test('every advertised question parses to its own intent', () => {
+  const { INTENTS } = require('../src/query/parser');
+  for (const intent of INTENTS) {
+    assert.ok(intent.example, `${intent.name} needs an example question`);
+    const parsed = parseQuestion(intent.example);
+    assert.ok(parsed, `${intent.name} example did not parse: ${intent.example}`);
+    assert.equal(parsed.name, intent.name, `"${intent.example}" routed to ${parsed.name}`);
+  }
+});
+
+test('who-works-most and who-last-touched stay distinct', () => {
+  assert.equal(parseQuestion('who works most on src/app.js').name, 'file-owner');
+  assert.equal(parseQuestion('who works most on src/app.js').argument, 'src/app.js');
+  assert.equal(parseQuestion('who last touched src/app.js').name, 'who-touched');
+  assert.equal(parseQuestion('who maintains src/app.js').name, 'file-owner');
+});
+
+test('recent-activity and change-analysis do not swallow each other', () => {
+  assert.equal(parseQuestion('what has changed recently').name, 'recent-activity');
+  assert.equal(parseQuestion('what happened lately').name, 'recent-activity');
+  assert.equal(parseQuestion('why is this repository changing so much').name, 'change-analysis');
+  assert.equal(parseQuestion('explain the churn').name, 'change-analysis');
+  // "last N commits" is a listing question, not an activity analysis.
+  assert.equal(parseQuestion('show the last 5 commits').name, 'last-commits');
+});
+
+test('file-owner names the most involved author for a path', () => {
+  const dir = sampleRepo();
+  try {
+    const output = answer(parseQuestion('who works most on app.js'), { cwd: dir, style });
+    assert.match(output, /works most on app\.js/);
+    assert.match(output, /of \d+ commits touching it/);
+    assert.match(output, /file totals/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('file-owner matches a path fragment and reports an unknown path plainly', () => {
+  const dir = sampleRepo();
+  try {
+    const fragment = answer(parseQuestion('who works most on app'), { cwd: dir, style });
+    assert.match(fragment, /app\.js/);
+
+    const missing = answer(parseQuestion('who works most on nowhere/at/all.js'), { cwd: dir, style });
+    assert.match(missing, /No tracked file matches/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('recent-activity summarises the newest slice of history', () => {
+  const dir = sampleRepo();
+  try {
+    const output = answer(parseQuestion('what has changed recently'), { cwd: dir, style });
+    assert.match(output, /^Recently: \d+ commits? of \d+/m);
+    assert.match(output, /churn\s+\d/);
+    assert.match(output, /authors\s+\S/);
+    assert.match(output, /latest commits:/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('change-analysis compares real rates when history spans days', () => {
+  const dir = makeRepo();
+  try {
+    // Quiet start: four commits, one a day, at the start of January.
+    for (let i = 0; i < 4; i++) {
+      commitAt(dir, `2026-01-0${i + 1}T09:00:00`, 'old.js', `rev ${i}\n`, `Slow change ${i}`);
+    }
+    // Then a burst a month later: two commits a day for three days, one file.
+    for (let i = 0; i < 6; i++) {
+      const day = 1 + Math.floor(i / 2);
+      const hour = i % 2 === 0 ? '09' : '15';
+      const body = Array.from({ length: 30 }, (_, line) => `line ${line} rev ${i}`).join('\n');
+      commitAt(dir, `2026-02-0${day}T${hour}:00:00`, 'burst.js', `${body}\n`, `Burst ${i}`, 'Grace Hopper');
+    }
+
+    const output = answer(parseQuestion('why is this repository changing so much'), { cwd: dir, style });
+    assert.match(output, /recent\s+\d+ commits over .*\/day/, 'a real span should quote a per-day rate');
+    assert.match(output, /baseline\s+\d+ commits over/);
+    assert.match(output, /pace\s+.*(faster|slower|same pace)/);
+    assert.match(output, /focus\s+\d+% of recent churn/);
+    assert.match(output, /driver\s+\S/);
+    assert.match(output, /counted directly from git history/);
+    assert.match(output, /burst\.js/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('change-analysis refuses to quote per-day rates for a same-day history', () => {
+  const dir = sampleRepo();
+  try {
+    const output = answer(parseQuestion('why is this repository changing so much'), { cwd: dir, style });
+    assert.match(output, /inside a single day/);
+    assert.match(output, /per-day rates would be meaningless/);
+    assert.ok(!/\d\/day/.test(output), 'no rate should be quoted');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('the new intents handle an empty repository', () => {
+  const dir = makeRepo();
+  try {
+    for (const question of ['who works most on app.js', 'what has changed recently', 'why is this repository changing so much']) {
+      assert.match(answer(parseQuestion(question), { cwd: dir, style }), /no commits yet/i, question);
+    }
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('an unmatched question is refused without false-matching a new intent', () => {
+  for (const question of ['what is the meaning of life', 'please deploy to production', 'make me a sandwich']) {
+    assert.equal(parseQuestion(question), null, question);
+  }
+  assert.throws(
+    () => answer(parseQuestion('what is the weather'), { cwd: process.cwd(), style }),
+    (err) => {
+      assert.equal(err.name, 'QueryError');
+      assert.match(err.message, /I can answer:/);
+      assert.match(err.message, /who works most on/, 'the new intents are advertised too');
+      return true;
+    },
+  );
 });

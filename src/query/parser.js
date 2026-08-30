@@ -30,13 +30,48 @@ const INTENTS = [
   {
     name: 'who-touched',
     describe: 'who last touched <file>',
+    example: 'who last touched src/app.js',
     keywords: [['who'], ['touched', 'changed', 'edited', 'modified', 'wrote']],
     extract: /(?:touched|changed|edited|modified|wrote)\s+(?:the\s+)?(?:file\s+)?(.+)$/i,
     argumentName: 'file',
   },
   {
+    name: 'file-owner',
+    describe: 'who works most on <path>',
+    example: 'who works most on src/app.js',
+    // "works on" and "maintains" ask about sustained involvement; "touched"
+    // asks about the most recent edit. The verb alone separates them, so a
+    // preposition is optional rather than a required keyword group.
+    keywords: [['who'], ['works', 'work', 'worked', 'working', 'owns', 'maintains', 'contributes']],
+    extract: /(?:work(?:s|ed|ing)?(?:\s+most)?\s+(?:on|in)|owns|maintains|contributes\s+to)\s+(?:the\s+)?(?:file\s+|directory\s+)?(.+)$/i,
+    argumentName: 'path',
+  },
+  {
+    name: 'recent-activity',
+    describe: 'what has changed recently',
+    example: 'what has changed recently',
+    keywords: [
+      ['recent', 'recently', 'lately', 'latest'],
+      ['changed', 'change', 'changes', 'changing', 'activity', 'happening', 'happened', 'going'],
+    ],
+    extract: /(?:last|past)\s+(\d+)/i,
+    argumentName: 'count',
+  },
+  {
+    name: 'change-analysis',
+    describe: 'why is this repository changing so much',
+    example: 'why is this repository changing so much',
+    keywords: [
+      ['why', 'explain', 'driving', 'cause'],
+      ['changing', 'change', 'changes', 'churn', 'busy', 'moving', 'active'],
+    ],
+    extract: null,
+    argumentName: null,
+  },
+  {
     name: 'when-was',
     describe: 'when was <commit> made',
+    example: 'when was HEAD committed',
     keywords: [['when'], ['commit', 'made', 'committed', 'was']],
     extract: /(?:commit|was)\s+([0-9a-f]{4,40}|\S+)/i,
     argumentName: 'rev',
@@ -44,6 +79,7 @@ const INTENTS = [
   {
     name: 'count-by-author',
     describe: 'how many commits by <author> (omit author for a full breakdown)',
+    example: 'how many commits by Ada',
     keywords: [['how many', 'count', 'number of'], ['commit', 'commits']],
     extract: /(?:by|from|did)\s+(.+)$/i,
     argumentName: 'author',
@@ -51,6 +87,7 @@ const INTENTS = [
   {
     name: 'files-changed',
     describe: 'what files changed in <commit>',
+    example: 'what files changed in HEAD',
     keywords: [['file', 'files'], ['in', 'changed', 'touched']],
     extract: /(?:in|of|for)\s+(?:commit\s+)?(\S+)$/i,
     argumentName: 'rev',
@@ -58,6 +95,7 @@ const INTENTS = [
   {
     name: 'last-commits',
     describe: 'show the last <n> commits',
+    example: 'show the last 5 commits',
     keywords: [['last', 'latest', 'recent'], ['commit', 'commits']],
     extract: /(\d+)/,
     argumentName: 'count',
@@ -65,6 +103,7 @@ const INTENTS = [
   {
     name: 'top-authors',
     describe: 'who are the top contributors',
+    example: 'who are the top contributors',
     keywords: [['who', 'top'], ['contributor', 'contributors', 'authors', 'author']],
     extract: null,
     argumentName: null,
@@ -72,6 +111,7 @@ const INTENTS = [
   {
     name: 'busiest-file',
     describe: 'which file changed the most',
+    example: 'which file changed the most often',
     keywords: [['which', 'what'], ['file', 'files'], ['most', 'often', 'frequently']],
     extract: null,
     argumentName: null,
@@ -79,6 +119,7 @@ const INTENTS = [
   {
     name: 'branch-list',
     describe: 'what branches exist',
+    example: 'what branches exist',
     keywords: [['branch', 'branches']],
     extract: null,
     argumentName: null,

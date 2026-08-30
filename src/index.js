@@ -44,6 +44,18 @@ lazy(api, 'readBlobs', () => require('./git-reader').readBlobs);
 lazy(api, 'isBinary', () => require('./git-reader').isBinary);
 lazy(api, 'GitError', () => require('./git-reader').GitError);
 
+// --- analysis --------------------------------------------------------------
+lazy(api, 'analysis', () => ({
+  ...require('./analysis/repo-model'),
+  ...require('./analysis/render-stats'),
+  ...require('./analysis/render-hotspots'),
+}));
+lazy(api, 'buildRepoModel', () => require('./analysis/repo-model').buildRepoModel);
+lazy(api, 'rankHotspots', () => require('./analysis/repo-model').rankHotspots);
+lazy(api, 'activityComparison', () => require('./analysis/repo-model').activityComparison);
+lazy(api, 'renderStats', () => require('./analysis/render-stats').renderStats);
+lazy(api, 'renderHotspots', () => require('./analysis/render-hotspots').renderHotspots);
+
 // --- graph -----------------------------------------------------------------
 lazy(api, 'graph', () => ({
   ...require('./graph/build-graph'),
@@ -74,6 +86,7 @@ lazy(api, 'toHunks', () => require('./diff/myers').toHunks);
 lazy(api, 'renderFileDiff', () => require('./diff/render-diff').renderFileDiff);
 
 // --- output ----------------------------------------------------------------
+lazy(api, 'format', () => require('./format'));
 lazy(api, 'createStyle', () => require('./ansi').createStyle);
 
 module.exports = api;

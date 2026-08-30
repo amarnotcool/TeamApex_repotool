@@ -19,7 +19,7 @@ const reader = require('../src/git-reader');
 const { createStyle } = require('../src/ansi');
 
 /** Flags that take a value rather than being booleans. */
-const VALUED_FLAGS = new Set(['limit', 'context', 'repo', 'branch']);
+const VALUED_FLAGS = new Set(['limit', 'context', 'repo', 'branch', 'sort', 'window']);
 
 function parseArgv(argv) {
   const positional = [];
@@ -54,36 +54,155 @@ function colorPreference(flags) {
   return undefined; // let ansi.js decide from TTY / NO_COLOR
 }
 
+/** Thrown for bad input; the CLI turns it into a message and exit code 2. */
+class UsageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'UsageError';
+  }
+}
+
 /**
- * Help text. The question list comes from the query module, which is loaded
- * lazily here too — if that module is missing, help still prints.
+ * Read a numeric flag, rejecting anything that is not a positive number.
+ * Returns undefined when the flag was not supplied.
  */
-function usage() {
-  let questions = '  (question list unavailable — the query module is missing)';
+function numericFlag(flags, name, { min = 1 } = {}) {
+  if (flags[name] === undefined) return undefined;
+  const value = Number(flags[name]);
+  if (!Number.isFinite(value) || value < min) {
+    throw new UsageError(`--${name} needs a number of at least ${min}, got: ${flags[name]}`);
+  }
+  return value;
+}
+
+/** Read a flag constrained to a fixed set of values. */
+function choiceFlag(flags, name, allowed, fallback) {
+  if (flags[name] === undefined) return fallback;
+  if (!allowed.includes(flags[name])) {
+    throw new UsageError(`--${name} must be one of: ${allowed.join(', ')} (got: ${flags[name]})`);
+  }
+  return flags[name];
+}
+
+/** Options every command understands. */
+const GLOBAL_OPTIONS = [
+  ['--repo PATH', 'repository to inspect (default: current directory)'],
+  ['--color', 'force ANSI colour on'],
+  ['--no-color', 'force ANSI colour off (also honours NO_COLOR)'],
+  ['--help', 'show help for the command'],
+];
+
+/**
+ * Per-command help: usage line, what it does, its own options and examples.
+ * Keeping this as data means `repotool help <command>` and `<command> --help`
+ * cannot drift apart from each other.
+ */
+const COMMANDS = {
+  graph: {
+    usage: 'repotool graph [--limit N] [--branch REF] [--no-dates]',
+    summary: 'draw the commit and merge history as a lane graph',
+    options: [
+      ['--limit N', 'read at most N commits'],
+      ['--branch REF', 'graph one branch instead of every ref'],
+      ['--no-dates', 'omit author dates'],
+    ],
+    examples: ['repotool graph', 'repotool graph --limit 20', 'repotool graph --branch main --no-dates'],
+  },
+  stats: {
+    usage: 'repotool stats [--limit N]',
+    summary: 'one-screen overview: commits, contributors, branches, churn',
+    options: [['--limit N', 'read at most N commits of history']],
+    examples: ['repotool stats', 'repotool stats --repo ../other-project'],
+  },
+  hotspots: {
+    usage: 'repotool hotspots [--limit N] [--sort score|commits|churn|authors]',
+    summary: 'rank files by how much attention they attract',
+    options: [
+      ['--limit N', 'rows to show (default 10)'],
+      ['--sort KEY', 'score (default), commits, churn or authors'],
+    ],
+    examples: ['repotool hotspots', 'repotool hotspots --limit 25 --sort churn'],
+  },
+  ask: {
+    usage: 'repotool ask "<question>"',
+    summary: 'answer a fixed set of questions about the repository',
+    options: [],
+    examples: [
+      'repotool ask "who last touched src/app.js"',
+      'repotool ask "who works most on src/app.js"',
+      'repotool ask "what has changed recently"',
+      'repotool ask "why is this repository changing so much"',
+    ],
+  },
+  diff: {
+    usage: 'repotool diff <commitA> [commitB] [--context N] [--stat]',
+    summary: 'unified diff between two revisions, computed with our own Myers diff',
+    options: [
+      ['--context N', 'lines of context around each change (default 3)'],
+      ['--stat', 'summary only, no diff bodies'],
+    ],
+    examples: ['repotool diff HEAD~3 HEAD', 'repotool diff main feature --context 5', 'repotool diff HEAD~1 HEAD --stat'],
+  },
+};
+
+/** Render a two-column option/example block. */
+function optionBlock(pairs, indent = '  ') {
+  const width = pairs.reduce((max, [flag]) => Math.max(max, flag.length), 0);
+  return pairs.map(([flag, description]) => `${indent}${flag.padEnd(width)}  ${description}`).join('\n');
+}
+
+/** Help for one command. */
+function commandUsage(name) {
+  const command = COMMANDS[name];
+  const parts = [`repotool ${name} — ${command.summary}`, '', 'Usage:', `  ${command.usage}`];
+
+  if (command.options.length) {
+    parts.push('', 'Options:', optionBlock(command.options));
+  }
+  parts.push('', 'Common options:', optionBlock(GLOBAL_OPTIONS));
+  parts.push('', 'Examples:', ...command.examples.map((example) => `  ${example}`));
+
+  if (name === 'ask') {
+    parts.push('', 'Questions repotool can answer:', questionList());
+  }
+  return `${parts.join('\n')}\n`;
+}
+
+/**
+ * The question list comes from the query module, which is loaded lazily here
+ * too — if that module is missing, help still prints.
+ */
+function questionList() {
   try {
-    questions = require('../src/query/parser')
+    return require('../src/query/parser')
       .supportedQuestions()
       .map((question) => `  - ${question}`)
       .join('\n');
   } catch {
-    /* fall through to the placeholder above */
+    return '  (question list unavailable — the query module is missing)';
   }
+}
+
+/** Top-level help. */
+function usage() {
+  const summaries = Object.entries(COMMANDS).map(([name, command]) => [name, command.summary]);
 
   return `repotool — understand a git repository, with zero dependencies
 
 Usage:
-  repotool graph [--limit N] [--branch REF] [--no-dates]
-  repotool ask "<question>"
-  repotool diff <commitA> <commitB> [--context N] [--stat]
-  repotool help
+  repotool <command> [options]
 
-Options:
-  --repo PATH     repository to inspect (default: current directory)
-  --limit N       maximum commits to read
-  --color         force ANSI colour on   --no-color  force it off
+Commands:
+${optionBlock(summaries)}
+  help      show this help, or "repotool help <command>"
+
+Common options:
+${optionBlock(GLOBAL_OPTIONS)}
 
 Questions repotool can answer:
-${questions}
+${questionList()}
+
+Run "repotool help <command>" for arguments and examples.
 `;
 }
 
@@ -92,7 +211,7 @@ function commandGraph(flags, style) {
   const { renderAscii } = require('../src/graph/render-ascii');
 
   const cwd = path.resolve(flags.repo || process.cwd());
-  const limit = flags.limit ? Number(flags.limit) : undefined;
+  const limit = numericFlag(flags, 'limit');
   const { commits, head } = reader.readCommits({
     cwd,
     limit,
@@ -121,6 +240,31 @@ function commandGraph(flags, style) {
   return 0;
 }
 
+function commandStats(flags, style) {
+  const { buildRepoModel } = require('../src/analysis/repo-model');
+  const { renderStats } = require('../src/analysis/render-stats');
+
+  const cwd = path.resolve(flags.repo || process.cwd());
+  const model = buildRepoModel({ cwd, limit: numericFlag(flags, 'limit') });
+  console.log(renderStats(model, { color: colorPreference(flags) }));
+  return 0;
+}
+
+const HOTSPOT_SORTS = ['score', 'commits', 'churn', 'authors'];
+
+function commandHotspots(flags, style) {
+  const { buildRepoModel } = require('../src/analysis/repo-model');
+  const { renderHotspots } = require('../src/analysis/render-hotspots');
+
+  const sort = choiceFlag(flags, 'sort', HOTSPOT_SORTS, 'score');
+  const limit = numericFlag(flags, 'limit');
+
+  const cwd = path.resolve(flags.repo || process.cwd());
+  const model = buildRepoModel({ cwd });
+  console.log(renderHotspots(model, { limit, sort, color: colorPreference(flags) }));
+  return 0;
+}
+
 function commandAsk(positional, flags, style) {
   const { parseQuestion } = require('../src/query/parser');
   const { answer } = require('../src/query/handlers');
@@ -128,7 +272,8 @@ function commandAsk(positional, flags, style) {
   const cwd = path.resolve(flags.repo || process.cwd());
   const question = positional.join(' ');
   if (!question.trim()) {
-    console.error(style.red('Ask a question, e.g. repotool ask "who last touched README.md"'));
+    console.error(style.red('repotool ask needs a question.'));
+    console.error(style.dim('Example: repotool ask "who last touched README.md" — see "repotool help ask".'));
     return 2;
   }
 
@@ -144,7 +289,8 @@ function commandDiff(positional, flags, style) {
   const cwd = path.resolve(flags.repo || process.cwd());
   const [revA, revB = 'HEAD'] = positional;
   if (!revA) {
-    console.error(style.red('Usage: repotool diff <commitA> [commitB]'));
+    console.error(style.red('repotool diff needs at least one revision.'));
+    console.error(style.dim('Usage: repotool diff <commitA> [commitB] — see "repotool help diff".'));
     return 2;
   }
 
@@ -158,7 +304,7 @@ function commandDiff(positional, flags, style) {
   }
 
   const color = colorPreference(flags);
-  const context = flags.context ? Number(flags.context) : 3;
+  const context = numericFlag(flags, 'context', { min: 0 });
   const totals = { added: 0, removed: 0 };
 
   // Fetch every blob on both sides in a single `git cat-file --batch` call
@@ -191,7 +337,7 @@ function commandDiff(positional, flags, style) {
 
     console.log(render.renderFileHeader(change.path, change.status, ops, { color }));
     if (!flags.stat) {
-      console.log(render.renderFileDiff(ops, { color, context }));
+      console.log(render.renderFileDiff(ops, { color, context: context === undefined ? 3 : context }));
       console.log();
     }
   }
@@ -206,13 +352,37 @@ function main(argv) {
   const style = createStyle({ enabled: colorPreference(flags) });
   const [command, ...rest] = positional;
 
-  if (!command || command === 'help' || flags.help) {
+  // `repotool help [command]` is a successful request for help: stdout, exit 0.
+  if (command === 'help') {
+    const topic = rest[0];
+    if (topic && COMMANDS[topic]) {
+      console.log(commandUsage(topic));
+      return 0;
+    }
+    if (topic) {
+      console.error(style.red(`Unknown command: ${topic}`));
+      console.error(usage());
+      return 1;
+    }
     console.log(usage());
-    return command ? 0 : 1;
+    return 0;
+  }
+
+  // Running with no command at all is a usage error, so it goes to stderr.
+  if (!command) {
+    console.error(usage());
+    return 2;
+  }
+
+  if (flags.help && COMMANDS[command]) {
+    console.log(commandUsage(command));
+    return 0;
   }
 
   const commands = {
     graph: () => commandGraph(flags, style),
+    stats: () => commandStats(flags, style),
+    hotspots: () => commandHotspots(flags, style),
     ask: () => commandAsk(rest, flags, style),
     diff: () => commandDiff(rest, flags, style),
   };
@@ -228,6 +398,11 @@ function main(argv) {
   } catch (err) {
     // One feature failing to load must not look like the whole tool crashed:
     // say which command is unavailable and leave the others usable.
+    if (err.name === 'UsageError') {
+      console.error(style.red(err.message));
+      console.error(style.dim(`See "repotool help ${command}".`));
+      return 2;
+    }
     if (err.code === 'MODULE_NOT_FOUND') {
       console.error(style.red(`The ${command} module is unavailable: ${err.message.split('\n')[0]}`));
       console.error(style.dim('The other commands still work — try `repotool help`.'));
