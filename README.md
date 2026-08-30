@@ -49,11 +49,11 @@ M      f27040a 2026-08-20 Ada Lovelace (main) Merge hotfix
 M |    0eb3d2e 2026-08-20 Ada Lovelace Merge feature into main
 |\|\
 * | |  5a22eb4 2026-08-20 Ada Lovelace Add readme
-|   |
-|   *  ab19254 2026-08-20 Grace Hopper (feature) Extend feature
-|   |
-|   *  ef60ae3 2026-08-20 Grace Hopper Add feature file
-|__/
+| |/
+| *    ab19254 2026-08-20 Grace Hopper (feature) Extend feature
+| |
+| *    ef60ae3 2026-08-20 Grace Hopper Add feature file
+|/
 *      01f599d 2026-08-20 Ada Lovelace Tweak app
 |
 o      231d066 2026-08-20 Ada Lovelace Initial commit
@@ -93,12 +93,14 @@ repotool diff HEAD~1 HEAD --stat
 ## Zero-dependency proof
 
 ```sh
-sh verify-zero-deps.sh
+node verify-zero-deps.js     # runs anywhere Node runs
+sh verify-zero-deps.sh       # same checks, POSIX shell
 ```
 
-It checks three things: the `dependencies` block is empty, every `require` in
-`src/` and `bin/` resolves to a Node built-in or a relative path, and no
-unexpected `node_modules` tree is present.
+Both check the same three things: the `dependencies` block is empty, every
+`require` in `src/`, `bin/` and `test/` resolves to a Node built-in or a
+relative path, and no unexpected `node_modules` tree is present. The Node
+version needs no shell, so it works on Windows without Git Bash.
 
 See [STDLIB.md](STDLIB.md) for the full package-by-package substitution log.
 
@@ -109,8 +111,9 @@ npm test        # or: node --test "test/*.test.js"
 ```
 
 The suite builds real throwaway git repositories and covers empty repos, a
-single root commit, merge commits, detached HEAD, malformed git output, and a
-randomised round-trip property for the diff algorithm.
+single root commit, merge commits, detached HEAD, malformed git output, a
+randomised round-trip property for the diff algorithm, and the dependency
+proof itself — planting a third-party import to confirm the checker fails.
 
 ## Design
 
@@ -118,11 +121,24 @@ Three modules, no shared internals — each stands alone.
 
 ```
 bin/repotool.js       argv routing
+src/index.js          public API for using repotool as a library
 src/git-reader.js     the only file that talks to git
 src/graph/            DAG layout + ASCII renderer
 src/query/            question -> intent -> answer
 src/diff/             Myers diff + unified-diff renderer
 src/ansi.js           escape codes, TTY/NO_COLOR aware
+```
+
+Feature modules are required lazily, both in the CLI and in `src/index.js`, so
+a problem in one feature cannot stop the other two from running.
+
+## Use it as a library
+
+```js
+const { readCommits, buildGraph, renderAscii, diffLines, parseQuestion } = require('@amarnotcool/repotool');
+
+const { commits } = readCommits({ cwd: '/path/to/repo' });
+console.log(renderAscii(buildGraph(commits)));
 ```
 
 `git-reader` shells out to the `git` binary for raw data only — commit

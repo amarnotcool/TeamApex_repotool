@@ -198,37 +198,83 @@ function fileAtCommit(rev, path, { cwd = process.cwd() } = {}) {
   return out === null ? null : out;
 }
 
-/**
- * Paths that differ between two revisions, with their change status and
- * whether git considers them binary.
- *
- * `--numstat` prints "-\t-" instead of line counts for binary content, which
- * is the cheapest reliable binary check available: it uses git's own
- * detection rather than us guessing from bytes.
- */
+/** Paths that differ between two revisions, with their change status. */
 function changedPaths(revA, revB, { cwd = process.cwd() } = {}) {
   const out = git(['diff', '--name-status', revA, revB], { cwd, allowFailure: true });
   if (out === null) return [];
-
-  const binary = new Set();
-  const numstat = git(['diff', '--numstat', revA, revB], { cwd, allowFailure: true });
-  if (numstat !== null) {
-    for (const line of numstat.split('\n')) {
-      const columns = line.split('\t');
-      if (columns.length >= 3 && columns[0] === '-' && columns[1] === '-') {
-        binary.add(columns[columns.length - 1]);
-      }
-    }
-  }
 
   return out
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => {
       const columns = line.split('\t');
-      const path = columns[columns.length - 1];
-      return { status: columns[0][0], path, binary: binary.has(path) };
+      return { status: columns[0][0], path: columns[columns.length - 1] };
     });
+}
+
+/** How much of a blob we inspect when deciding whether it is binary. */
+const BINARY_SNIFF_BYTES = 8000;
+
+/**
+ * Binary detection, the way most tools do it: a NUL byte inside the first few
+ * kilobytes means the content is not text. We look at the bytes ourselves
+ * rather than asking a diff command to classify the file for us.
+ */
+function isBinary(buffer) {
+  if (!buffer || !buffer.length) return false;
+  const nul = buffer.indexOf(0);
+  return nul !== -1 && nul < Math.min(buffer.length, BINARY_SNIFF_BYTES);
+}
+
+/**
+ * Read many blobs in one git invocation.
+ *
+ * `git cat-file --batch` takes a list of `<rev>:<path>` specs on stdin and
+ * streams back `<oid> <type> <size>\n<contents>\n` for each, or
+ * `<spec> missing\n` for one that does not exist. One spawn for a whole diff
+ * beats one spawn per file.
+ *
+ * @param {string[]} specs  e.g. ['abc123:src/app.js', 'def456:README.md']
+ * @returns {Map<string, Buffer|null>} spec -> contents, null when missing
+ */
+function readBlobs(specs, { cwd = process.cwd() } = {}) {
+  const results = new Map();
+  if (!specs.length) return results;
+
+  let stdout;
+  try {
+    // No `encoding` option: we want the raw Buffer, since blobs may be binary
+    // and sizes in the batch header are byte counts, not character counts.
+    stdout = execFileSync('git', ['cat-file', '--batch'], {
+      cwd,
+      input: `${specs.join('\n')}\n`,
+      maxBuffer: 512 * 1024 * 1024,
+      windowsHide: true,
+    });
+  } catch (err) {
+    throw new GitError('git cat-file --batch failed', { code: 'GIT_FAILED', cause: err });
+  }
+
+  let offset = 0;
+  for (const spec of specs) {
+    const newline = stdout.indexOf(0x0a, offset);
+    if (newline === -1) break;
+
+    const header = stdout.subarray(offset, newline).toString('utf8');
+    // "<spec> missing" for anything git cannot resolve.
+    if (header.endsWith(' missing')) {
+      results.set(spec, null);
+      offset = newline + 1;
+      continue;
+    }
+
+    const size = Number(header.split(' ')[2]);
+    const start = newline + 1;
+    results.set(spec, stdout.subarray(start, start + size));
+    offset = start + size + 1; // skip the newline git appends after contents
+  }
+
+  return results;
 }
 
 module.exports = {
@@ -244,6 +290,8 @@ module.exports = {
   resolveRev,
   fileAtCommit,
   changedPaths,
+  readBlobs,
+  isBinary,
   FIELD,
   RECORD,
 };

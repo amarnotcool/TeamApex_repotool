@@ -91,6 +91,34 @@ function trimLanes(lanes) {
 }
 
 /**
+ * Close the holes a finished branch leaves behind.
+ *
+ * When a lane empties, every lane to its right slides one column left rather
+ * than leaving an empty gutter running down the rest of the graph. The moves
+ * are returned so the renderer can draw the sideways step instead of having
+ * lanes teleport between rows.
+ *
+ * @returns {Array<{from: number, to: number}>} moves, left-to-right
+ */
+function compactLanes(lanes) {
+  const moves = [];
+  let target = 0;
+
+  for (let source = 0; source < lanes.length; source++) {
+    if (lanes[source] === null) continue;
+    if (source !== target) {
+      moves.push({ from: source, to: target });
+      lanes[target] = lanes[source];
+      lanes[source] = null;
+    }
+    target++;
+  }
+
+  lanes.length = target;
+  return moves;
+}
+
+/**
  * Lay the commits out into rows.
  *
  * @param {Array} commits commit objects from git-reader
@@ -143,13 +171,22 @@ function buildGraph(commits) {
     });
 
     trimLanes(lanes);
+    // Slide lanes left into any hole this commit just opened, and remap the
+    // parent lanes we recorded so they still point at the right columns.
+    const laneMoves = compactLanes(lanes);
+    for (const move of laneMoves) {
+      for (let i = 0; i < parentLanes.length; i++) {
+        if (parentLanes[i] === move.from) parentLanes[i] = move.to;
+      }
+    }
+
     const lanesAfter = lanes.slice();
     width = Math.max(width, lanesBefore.length, lanesAfter.length);
 
-    rows.push({ commit, lane, lanesBefore, lanesAfter, parentLanes });
+    rows.push({ commit, lane, lanesBefore, lanesAfter, parentLanes, laneMoves });
   }
 
   return { rows, width };
 }
 
-module.exports = { buildGraph, topoSort };
+module.exports = { buildGraph, topoSort, compactLanes };

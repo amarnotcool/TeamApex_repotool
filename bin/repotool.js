@@ -7,16 +7,15 @@
  * Hand-rolled argv parsing: no commander, no yargs. The shape is
  *   repotool <command> [positional...] [--flag] [--option value]
  * and each command owns its own positional handling.
+ *
+ * Feature modules are required inside their command handler rather than at
+ * the top of the file. The three features are meant to stand alone, so a
+ * missing or broken module must only take down its own command — `diff` and
+ * `ask` keep working even if the graph module is gone entirely.
  */
 
 const path = require('node:path');
 const reader = require('../src/git-reader');
-const { buildGraph } = require('../src/graph/build-graph');
-const { renderAscii } = require('../src/graph/render-ascii');
-const { parseQuestion, supportedQuestions } = require('../src/query/parser');
-const { answer, QueryError } = require('../src/query/handlers');
-const myers = require('../src/diff/myers');
-const render = require('../src/diff/render-diff');
 const { createStyle } = require('../src/ansi');
 
 /** Flags that take a value rather than being booleans. */
@@ -55,7 +54,22 @@ function colorPreference(flags) {
   return undefined; // let ansi.js decide from TTY / NO_COLOR
 }
 
-const USAGE = `repotool — understand a git repository, with zero dependencies
+/**
+ * Help text. The question list comes from the query module, which is loaded
+ * lazily here too — if that module is missing, help still prints.
+ */
+function usage() {
+  let questions = '  (question list unavailable — the query module is missing)';
+  try {
+    questions = require('../src/query/parser')
+      .supportedQuestions()
+      .map((question) => `  - ${question}`)
+      .join('\n');
+  } catch {
+    /* fall through to the placeholder above */
+  }
+
+  return `repotool — understand a git repository, with zero dependencies
 
 Usage:
   repotool graph [--limit N] [--branch REF] [--no-dates]
@@ -69,12 +83,14 @@ Options:
   --color         force ANSI colour on   --no-color  force it off
 
 Questions repotool can answer:
-${supportedQuestions()
-  .map((q) => `  - ${q}`)
-  .join('\n')}
+${questions}
 `;
+}
 
 function commandGraph(flags, style) {
+  const { buildGraph } = require('../src/graph/build-graph');
+  const { renderAscii } = require('../src/graph/render-ascii');
+
   const cwd = path.resolve(flags.repo || process.cwd());
   const limit = flags.limit ? Number(flags.limit) : undefined;
   const { commits, head } = reader.readCommits({
@@ -106,6 +122,9 @@ function commandGraph(flags, style) {
 }
 
 function commandAsk(positional, flags, style) {
+  const { parseQuestion } = require('../src/query/parser');
+  const { answer } = require('../src/query/handlers');
+
   const cwd = path.resolve(flags.repo || process.cwd());
   const question = positional.join(' ');
   if (!question.trim()) {
@@ -119,6 +138,9 @@ function commandAsk(positional, flags, style) {
 }
 
 function commandDiff(positional, flags, style) {
+  const myers = require('../src/diff/myers');
+  const render = require('../src/diff/render-diff');
+
   const cwd = path.resolve(flags.repo || process.cwd());
   const [revA, revB = 'HEAD'] = positional;
   if (!revA) {
@@ -139,16 +161,29 @@ function commandDiff(positional, flags, style) {
   const context = flags.context ? Number(flags.context) : 3;
   const totals = { added: 0, removed: 0 };
 
+  // Fetch every blob on both sides in a single `git cat-file --batch` call
+  // rather than spawning git twice per file.
+  const specs = [];
   for (const change of changes) {
+    if (change.status !== 'A') specs.push(`${hashA}:${change.path}`);
+    if (change.status !== 'D') specs.push(`${hashB}:${change.path}`);
+  }
+  const blobs = reader.readBlobs(specs, { cwd });
+  const blobFor = (hash, filePath) => blobs.get(`${hash}:${filePath}`) || null;
+
+  for (const change of changes) {
+    const beforeBlob = change.status === 'A' ? null : blobFor(hashA, change.path);
+    const afterBlob = change.status === 'D' ? null : blobFor(hashB, change.path);
+
     // Diffing binary content line by line is meaningless and slow, so we
     // report it the way git does and move on.
-    if (change.binary) {
+    if (reader.isBinary(beforeBlob) || reader.isBinary(afterBlob)) {
       console.log(render.renderBinaryFile(change.path, change.status, { color }));
       continue;
     }
 
-    const before = change.status === 'A' ? '' : reader.fileAtCommit(hashA, change.path, { cwd }) || '';
-    const after = change.status === 'D' ? '' : reader.fileAtCommit(hashB, change.path, { cwd }) || '';
+    const before = beforeBlob ? beforeBlob.toString('utf8') : '';
+    const after = afterBlob ? afterBlob.toString('utf8') : '';
     const ops = myers.diffLines(before, after);
     const fileStats = myers.stats(ops);
     totals.added += fileStats.added;
@@ -172,21 +207,33 @@ function main(argv) {
   const [command, ...rest] = positional;
 
   if (!command || command === 'help' || flags.help) {
-    console.log(USAGE);
+    console.log(usage());
     return command ? 0 : 1;
   }
 
-  switch (command) {
-    case 'graph':
-      return commandGraph(flags, style);
-    case 'ask':
-      return commandAsk(rest, flags, style);
-    case 'diff':
-      return commandDiff(rest, flags, style);
-    default:
-      console.error(style.red(`Unknown command: ${command}`));
-      console.error(USAGE);
+  const commands = {
+    graph: () => commandGraph(flags, style),
+    ask: () => commandAsk(rest, flags, style),
+    diff: () => commandDiff(rest, flags, style),
+  };
+
+  if (!commands[command]) {
+    console.error(style.red(`Unknown command: ${command}`));
+    console.error(usage());
+    return 1;
+  }
+
+  try {
+    return commands[command]();
+  } catch (err) {
+    // One feature failing to load must not look like the whole tool crashed:
+    // say which command is unavailable and leave the others usable.
+    if (err.code === 'MODULE_NOT_FOUND') {
+      console.error(style.red(`The ${command} module is unavailable: ${err.message.split('\n')[0]}`));
+      console.error(style.dim('The other commands still work — try `repotool help`.'));
       return 1;
+    }
+    throw err;
   }
 }
 
@@ -195,7 +242,8 @@ if (require.main === module) {
   try {
     process.exitCode = main(process.argv.slice(2));
   } catch (err) {
-    if (err instanceof reader.GitError || err instanceof QueryError) {
+    // QueryError is matched by name: its module may not even be loaded.
+    if (err instanceof reader.GitError || err.name === 'QueryError') {
       console.error(style.red(err.message));
       process.exitCode = 1;
     } else {

@@ -141,21 +141,40 @@ const handlers = {
   },
 
   'branch-list'(intent, { cwd, style }) {
-    const raw = reader.git(['for-each-ref', '--format=%(refname:short)\t%(objectname:short)', 'refs/heads'], {
-      cwd,
-      allowFailure: true,
-    });
+    // Local and remote-tracking branches both matter when you are trying to
+    // understand a repository, so we read refs/heads and refs/remotes.
+    const raw = reader.git(
+      ['for-each-ref', '--format=%(refname)\t%(refname:short)\t%(objectname:short)', 'refs/heads', 'refs/remotes'],
+      { cwd, allowFailure: true },
+    );
     const current = reader.head(cwd);
     if (!raw || !raw.trim()) return 'No branches yet.';
-    return raw
+
+    const branches = raw
       .split('\n')
       .filter((line) => line.trim())
       .map((line) => {
-        const [name, hash] = line.split('\t');
-        const marker = name === current.branch ? style.brightGreen('*') : ' ';
-        return `${marker} ${name}  ${style.dim(hash)}`;
+        const [fullRef, name, hash] = line.split('\t');
+        return { fullRef, name, hash, remote: fullRef.startsWith('refs/remotes/') };
       })
-      .join('\n');
+      // A remote's HEAD pointer is an alias, not a branch of its own. Match on
+      // the full ref: refs/remotes/origin/HEAD shortens to plain "origin".
+      .filter((branch) => !branch.fullRef.endsWith('/HEAD'));
+
+    const local = branches.filter((branch) => !branch.remote);
+    const remote = branches.filter((branch) => branch.remote);
+
+    const lines = [];
+    for (const branch of local) {
+      const marker = branch.name === current.branch ? style.brightGreen('*') : ' ';
+      lines.push(`${marker} ${branch.name}  ${style.dim(branch.hash)}`);
+    }
+    for (const branch of remote) {
+      lines.push(`  ${style.cyan(branch.name)}  ${style.dim(branch.hash)} ${style.dim('(remote)')}`);
+    }
+
+    const summary = `${local.length} local, ${remote.length} remote`;
+    return [...lines, style.dim(summary)].join('\n');
   },
 };
 

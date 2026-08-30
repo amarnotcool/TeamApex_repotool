@@ -76,6 +76,12 @@ function transitionRow(row, style) {
     if (hash && !openedHere.has(lane)) draw(cells, lane * LANE_WIDTH, laneColor(style, lane)('|'));
   });
 
+  // A lane that slid left to close a hole steps across visibly, so the eye can
+  // follow it instead of finding it in a new column on the next row.
+  for (const move of row.laneMoves || []) {
+    draw(cells, move.from * LANE_WIDTH - 1, laneColor(style, move.to)('/'));
+  }
+
   // Route each parent from the commit's lane into the lane it landed in.
   for (const parentLane of row.parentLanes) {
     if (parentLane === row.lane) continue;

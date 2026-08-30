@@ -18,7 +18,9 @@ where that code lives.
 | `date-fns`, `dayjs`, `moment` | `git`'s ISO-8601 output (`%aI`, `%cI`) plus the built-in `Date` and string slicing | `src/git-reader.js`, `src/query/handlers.js` |
 | `jest`, `mocha`, `chai`, `tap` | `node:test` and `node:assert/strict` | `test/*.test.js` |
 | `tmp`, `fs-extra`, `rimraf` | `fs.mkdtempSync`, `fs.rmSync({ recursive: true })`, `os.tmpdir()` | `test/helpers.js` |
-| `depcheck`, `license-checker` | our own import scanner that walks `src/` and `bin/` and rejects any non-builtin, non-relative `require` | `verify-zero-deps.sh` |
+| `depcheck`, `license-checker` | our own import scanner that walks `src/`, `bin/` and `test/` and rejects any non-builtin, non-relative `require` | `verify-zero-deps.js`, `verify-zero-deps.sh` |
+| `isbinaryfile`, `istextorbinary` | our own NUL-byte sniff over the first 8 kB of a blob | `src/git-reader.js` (`isBinary`) |
+| `shelljs`, `execa`, `cross-spawn` | `child_process.execFileSync`, including a batched `git cat-file --batch` read over stdin | `src/git-reader.js` (`readBlobs`) |
 
 Node built-ins actually used: `child_process`, `fs`, `os`, `path`, `process`,
 `node:test`, `node:assert`.

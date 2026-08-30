@@ -109,7 +109,7 @@ test('renderer emits no escape codes when colour is disabled', () => {
   assert.ok(!output.includes('\x1b['));
 });
 
-test('binary content is flagged instead of being line-diffed', () => {
+test('binary content is detected from blob bytes, without any diff command', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const { makeRepo, commit, git, cleanup } = require('./helpers');
@@ -118,16 +118,42 @@ test('binary content is flagged instead of being line-diffed', () => {
   const dir = makeRepo();
   try {
     commit(dir, 'text.txt', 'hello\n', 'Add text');
-    // A NUL byte early in the file is what makes git treat it as binary.
+    // A NUL byte is what makes content binary for our purposes.
     fs.writeFileSync(path.join(dir, 'blob.bin'), Buffer.from([0, 1, 2, 3, 0, 255]));
     git(dir, ['add', '.']);
     git(dir, ['commit', '-q', '-m', 'Add binary']);
 
     const changes = reader.changedPaths('HEAD~1', 'HEAD', { cwd: dir });
-    const blob = changes.find((change) => change.path === 'blob.bin');
-    assert.ok(blob, 'expected the binary file in the change list');
-    assert.equal(blob.binary, true);
+    const paths = changes.map((change) => change.path);
+    assert.ok(paths.includes('blob.bin'), 'expected the binary file in the change list');
+
+    const blobs = reader.readBlobs(['HEAD:blob.bin', 'HEAD:text.txt'], { cwd: dir });
+    assert.equal(reader.isBinary(blobs.get('HEAD:blob.bin')), true);
+    assert.equal(reader.isBinary(blobs.get('HEAD:text.txt')), false);
   } finally {
     cleanup(dir);
   }
+});
+
+test('readBlobs fetches many blobs in one call and reports missing ones', () => {
+  const { makeRepo, commit, cleanup } = require('./helpers');
+  const reader = require('../src/git-reader');
+
+  const dir = makeRepo();
+  try {
+    commit(dir, 'a.txt', 'alpha\n', 'Add a');
+    commit(dir, 'b.txt', 'beta\n', 'Add b');
+
+    const blobs = reader.readBlobs(['HEAD:a.txt', 'HEAD:b.txt', 'HEAD:nope.txt'], { cwd: dir });
+    assert.equal(blobs.get('HEAD:a.txt').toString('utf8'), 'alpha\n');
+    assert.equal(blobs.get('HEAD:b.txt').toString('utf8'), 'beta\n');
+    assert.equal(blobs.get('HEAD:nope.txt'), null, 'a missing path resolves to null');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('readBlobs returns an empty map for an empty request', () => {
+  const reader = require('../src/git-reader');
+  assert.equal(reader.readBlobs([], { cwd: process.cwd() }).size, 0);
 });

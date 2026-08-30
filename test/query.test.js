@@ -102,8 +102,30 @@ test('branch-list marks the current branch', () => {
     const output = answer(parseQuestion('what branches exist'), { cwd: dir, style });
     assert.match(output, /\* main/);
     assert.match(output, /feature/);
+    assert.match(output, /2 local, 0 remote/);
   } finally {
     cleanup(dir);
+  }
+});
+
+test('branch-list includes remote-tracking branches, labelled as remote', () => {
+  const origin = sampleRepo();
+  const clone = makeRepo();
+  try {
+    // Give the clone a real remote by fetching from another repository on disk.
+    git(origin, ['branch', 'release']);
+    git(clone, ['remote', 'add', 'origin', origin]);
+    git(clone, ['fetch', '-q', 'origin']);
+
+    const output = answer(parseQuestion('what branches exist'), { cwd: clone, style });
+    assert.match(output, /origin\/main/, 'expected the remote branch to be listed');
+    assert.match(output, /origin\/release/);
+    assert.match(output, /\(remote\)/, 'remote branches must be labelled');
+    assert.match(output, /remote$|2 remote/m);
+    assert.ok(!/origin\/HEAD/.test(output), "a remote's HEAD alias is not a branch");
+  } finally {
+    cleanup(origin);
+    cleanup(clone);
   }
 });
 

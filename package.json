@@ -18,19 +18,24 @@
     "type": "git",
     "url": "git+https://github.com/amarnotcool/repotool.git"
   },
-  "bin": { "repotool": "bin/repotool.js" },
-  "main": "src/git-reader.js",
+  "bin": {
+    "repotool": "bin/repotool.js"
+  },
+  "main": "src/index.js",
   "files": [
     "bin/",
     "src/",
     "STDLIB.md",
-    "verify-zero-deps.sh"
+    "verify-zero-deps.sh",
+    "verify-zero-deps.js"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
     "verify": "sh verify-zero-deps.sh"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "license": "MIT",
   "dependencies": {}
 }

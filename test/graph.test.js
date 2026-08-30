@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const reader = require('../src/git-reader');
-const { buildGraph, topoSort } = require('../src/graph/build-graph');
+const { buildGraph, topoSort, compactLanes } = require('../src/graph/build-graph');
 const { renderAscii } = require('../src/graph/render-ascii');
 const { makeRepo, commit, git, cleanup } = require('./helpers');
 
@@ -153,4 +153,41 @@ test('a merge draws a single opening diagonal, not a doubled bar', () => {
   } finally {
     cleanup(dir);
   }
+});
+
+test('lane layout never leaves a hole between active lanes', () => {
+  const dir = branchyRepo();
+  try {
+    const { commits } = reader.readCommits({ cwd: dir });
+    const graph = buildGraph(commits);
+
+    for (const row of graph.rows) {
+      const holeIndex = row.lanesAfter.findIndex((hash) => !hash);
+      if (holeIndex === -1) continue;
+      const occupiedAfterHole = row.lanesAfter.slice(holeIndex).some(Boolean);
+      assert.ok(
+        !occupiedAfterHole,
+        `row ${row.commit.shortHash} leaves an empty lane with active lanes to its right`,
+      );
+    }
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('compactLanes slides lanes left and reports the moves', () => {
+  const lanes = ['a', null, 'c', null, 'e'];
+  const moves = compactLanes(lanes);
+
+  assert.deepEqual(lanes, ['a', 'c', 'e']);
+  assert.deepEqual(moves, [
+    { from: 2, to: 1 },
+    { from: 4, to: 2 },
+  ]);
+});
+
+test('compactLanes leaves an already dense layout untouched', () => {
+  const lanes = ['a', 'b', 'c'];
+  assert.deepEqual(compactLanes(lanes), []);
+  assert.deepEqual(lanes, ['a', 'b', 'c']);
 });
