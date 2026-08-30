@@ -9,14 +9,17 @@
  */
 
 const reader = require('../git-reader');
-const {
-  buildRepoModel,
-  matchFiles,
-  fileContributors,
-  activityComparison,
-} = require('../analysis/repo-model');
 const format = require('../format');
 const { supportedQuestions } = require('./parser');
+
+/**
+ * The aggregate handlers need the shared repository model; the rest do not.
+ * Loading it on use rather than on import keeps questions like "who last
+ * touched X" answerable even if the analysis layer is missing or broken.
+ */
+function analysis() {
+  return require('../analysis/repo-model');
+}
 
 function formatDate(iso) {
   if (!iso) return 'unknown date';
@@ -80,7 +83,7 @@ const handlers = {
   'count-by-author'(intent, { cwd, style }) {
     // Contributor counts come from the shared model, which reads the same
     // history this handler used to walk itself.
-    const model = buildRepoModel({ cwd });
+    const model = analysis().buildRepoModel({ cwd });
     if (model.isEmpty) return 'This repository has no commits yet.';
 
     const counts = new Map(model.contributors.map((author) => [author.name, author.commits]));
@@ -148,17 +151,17 @@ const handlers = {
 
   'file-owner'(intent, { cwd, style }) {
     const wanted = requireArgument(intent, 'a file or directory path');
-    const model = buildRepoModel({ cwd });
+    const model = analysis().buildRepoModel({ cwd });
     if (model.isEmpty) return 'This repository has no commits yet.';
 
-    const matches = matchFiles(model, wanted);
+    const matches = analysis().matchFiles(model, wanted);
     if (!matches.length) {
       return `No tracked file matches ${style.bold(wanted)} — check the path as git records it.`;
     }
 
     const path = matches[0];
     const file = model.fileMap.get(path);
-    const contributors = fileContributors(model, path);
+    const contributors = analysis().fileContributors(model, path);
     const leader = contributors[0];
 
     const lines = [
@@ -186,12 +189,12 @@ const handlers = {
   },
 
   'recent-activity'(intent, { cwd, style }) {
-    const model = buildRepoModel({ cwd });
+    const model = analysis().buildRepoModel({ cwd });
     if (model.isEmpty) return 'This repository has no commits yet.';
 
     const requested = Number(intent.argument);
     const windowSize = Number.isFinite(requested) && requested > 0 ? requested : undefined;
-    const activity = activityComparison(model, { windowSize });
+    const activity = analysis().activityComparison(model, { windowSize });
     const { recent } = activity;
 
     const lines = [
@@ -226,10 +229,10 @@ const handlers = {
   },
 
   'change-analysis'(intent, { cwd, style }) {
-    const model = buildRepoModel({ cwd });
+    const model = analysis().buildRepoModel({ cwd });
     if (model.isEmpty) return 'This repository has no commits yet.';
 
-    const activity = activityComparison(model);
+    const activity = analysis().activityComparison(model);
     const { recent, baseline, concentration } = activity;
 
     const lines = [`${style.bold('Why this repository is changing')}`];

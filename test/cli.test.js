@@ -328,3 +328,26 @@ test('the public API exposes the analysis layer alongside the feature modules', 
     cleanup(repo);
   }
 });
+
+test('questions that do not need the analysis layer survive without it', () => {
+  const projectDir = projectCopy();
+  const repo = busyRepo();
+  try {
+    fs.rmSync(path.join(projectDir, 'src', 'analysis'), { recursive: true, force: true });
+
+    // These read git directly and must keep working.
+    for (const question of ['what branches exist', 'who last touched a.js', 'show the last 2 commits']) {
+      const result = runCli(projectDir, ['ask', question, '--no-color'], repo);
+      assert.equal(result.status, 0, `"${question}" should not need the analysis layer: ${result.output}`);
+    }
+
+    // An aggregate question does need it, and says so rather than crashing.
+    const aggregate = runCli(projectDir, ['ask', 'who are the top contributors', '--no-color'], repo);
+    assert.equal(aggregate.status, 1);
+    assert.match(aggregate.output, /module is unavailable/);
+    assert.ok(!aggregate.output.includes('at Object.'), 'no stack trace');
+  } finally {
+    cleanup(projectDir);
+    cleanup(repo);
+  }
+});
