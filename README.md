@@ -8,8 +8,7 @@ git history, and every score it prints is followed by the formula that produced
 it.
 
 ```sh
-git clone https://github.com/amarnotcool/TeamApex_repotool.git
-node TeamApex_repotool/bin/repotool.js stats
+npx @amarnotcool/repotool-apex stats
 ```
 
 ## Commands at a glance
@@ -31,8 +30,23 @@ Run `repotool help <command>` for the full flag list and examples.
 
 ## Run it
 
-Nothing to install, nothing to build — clone the repository and run it
-straight from source:
+Run it straight from the registry, without installing anything:
+
+```sh
+npx @amarnotcool/repotool-apex graph
+```
+
+Install it globally to get a `repotool` command on your `PATH`:
+
+```sh
+npm i -g @amarnotcool/repotool-apex
+repotool graph
+```
+
+That global install pulls exactly one package: `dependencies` is empty, so
+there is no tree behind it.
+
+Or skip the registry entirely and run it from a clone:
 
 ```sh
 git clone https://github.com/amarnotcool/TeamApex_repotool.git
@@ -40,8 +54,7 @@ cd TeamApex_repotool
 node bin/repotool.js graph
 ```
 
-There is no install step because there is nothing to install: `dependencies` is
-empty, so a clone is already everything the tool needs.
+Nothing to build either — a clone is already everything the tool needs.
 
 To run it against another repository, point `--repo` at that checkout:
 
@@ -611,7 +624,7 @@ const {
   readCommits, buildGraph, renderAscii, renderSvg,
   buildRepoModel, statsJson, hotspotsJson,
   diffLines, parseQuestion, answerQuestionJson,
-} = require('/path/to/TeamApex_repotool/src/index.js');
+} = require('@amarnotcool/repotool-apex');
 
 const { commits } = readCommits({ cwd: '/path/to/repo' });
 console.log(renderAscii(buildGraph(commits)));

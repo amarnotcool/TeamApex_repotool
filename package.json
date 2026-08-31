@@ -1,6 +1,6 @@
 {
-  "name": "@amarnotcool/repotool",
-  "version": "0.4.0",
+  "name": "@amarnotcool/repotool-apex",
+  "version": "1.0.0",
   "description": "Zero-dependency CLI that reads, graphs, queries and diffs a git repository using only the Node.js standard library.",
   "keywords": [
     "git",
@@ -12,11 +12,11 @@
     "no-dependencies",
     "stdlib"
   ],
-  "homepage": "https://github.com/amarnotcool/repotool#readme",
-  "bugs": "https://github.com/amarnotcool/repotool/issues",
+  "homepage": "https://github.com/amarnotcool/TeamApex_repotool#readme",
+  "bugs": "https://github.com/amarnotcool/TeamApex_repotool/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/amarnotcool/repotool.git"
+    "url": "git+https://github.com/amarnotcool/TeamApex_repotool.git"
   },
   "bin": {
     "repotool": "bin/repotool.js"
