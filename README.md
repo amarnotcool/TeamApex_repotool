@@ -28,6 +28,23 @@ npx @amarnotcool/repotool-apex stats
 Every command also takes `--repo PATH`, `--color`, `--no-color` and `--help`.
 Run `repotool help <command>` for the full flag list and examples.
 
+## Limitations
+
+The honest caveats, collected in one place. Each is explained in full where it
+applies; this is the index.
+
+- A `git` binary must be on `PATH` — there is no fallback git implementation.
+- Table alignment counts code units, not display width, so CJK filenames and
+  emoji misalign columns (see [STDLIB.md](STDLIB.md)).
+- `diff` keeps memory bounded through linear-space refinement, but a
+  pathological diff of two huge dissimilar files has no explicit ceiling (see
+  [STDLIB.md](STDLIB.md)).
+- Numbers and dates are formatted the same way everywhere and are not
+  locale-aware — always comma grouping, never the host locale's convention
+  (see [STDLIB.md](STDLIB.md)).
+- Merge commits carry no numstat output, so merges are excluded from every
+  churn figure (see [`hotspots`](#hotspots)).
+
 ## Run it
 
 Run it straight from the registry, without installing anything:
@@ -558,6 +575,8 @@ Both check the same three things: the `dependencies` block is empty, every
 `require` in `src/`, `bin/` and `test/` resolves to a Node built-in or a
 relative path, and no unexpected `node_modules` tree is present. The Node
 version needs no shell, so it works on Windows without Git Bash.
+
+A committed run of this proof is at [deps-proof.txt](deps-proof.txt).
 
 The proof is itself tested: the suite plants a real third-party import and a
 declared dependency in a copy of the project and asserts the checker fails.
