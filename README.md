@@ -130,6 +130,110 @@ squash-merges everything will report less churn than the branch history
 suggests. Every file-level answer reads that same pass, so `hotspots` and
 `ask "which file changed the most often"` cannot disagree with each other.
 
+### `repotool health`
+
+Four measurements of the repository, each printed next to the formula that
+produced it. Nothing here is a judgement or an estimate — every number is
+arithmetic over the same history `stats` and `hotspots` read, and `--help`
+prints the formulas, the bands and the warning thresholds in full.
+
+```
+repotool health — repotool
+
+Activity         50  ██████████           1.5× the baseline pace (1.5/day vs 1/day), capped at 3×
+Concentration    77  ███████████████      23% of 10,722 churned lines are in the 3 busiest files
+Stability        65  █████████████        6 commits of 17 mention a fix, bug, revert or regression
+Collaboration    24  █████                Devpratap made 76% of 17 commits
+
+Overall   54  FAIR
+equal-weighted mean of the scores above · bands: 80+ EXCELLENT · 60+ GOOD · 40+ FAIR · 0+ NEEDS ATTENTION
+
+Warnings
+────────
+! README.md changed in 9 of 17 commits (threshold: more than 5)
+! Devpratap made 76% of all commits (threshold: above 70%)
+```
+
+| Dimension | Formula (higher is better) |
+|---|---|
+| Activity | `min(recent commits/day ÷ baseline commits/day, 3) ÷ 3 × 100` |
+| Concentration | `100 − (churn in the 3 busiest files ÷ total churn × 100)` |
+| Stability | `100 − (subjects matching the fix pattern ÷ commits × 100)` |
+| Collaboration | `100 − (top contributor's commits ÷ total commits × 100)` |
+
+The fix pattern is `\b(fix|fixes|fixed|fixing|bug|bugs|bugfix|hotfix|revert|reverts|reverted|regression)\b`,
+case-insensitive — word boundaries, so `prefix` is not a fix and `debugger` is
+not a bug.
+
+**Activity refuses to answer rather than guess.** It reuses the comparison
+behind `ask "why is this repository changing so much"`, including that
+answer's rule: when either period spans under a day, or there are fewer than
+four commits, no ratio is printed and the dimension is left out of the overall
+mean instead of being filled in with a plausible number.
+
+Warnings print only when they trigger: one file changed in more than
+`max(5, 25% of all commits)` commits, more than 50% of all churn in the three
+busiest files, or one contributor above 70% of all commits.
+
+### `repotool timeline`
+
+Commit activity per day (or week), scaled against the busiest bucket on screen.
+
+```
+repotool timeline --limit 6
+
+Repository Activity
+───────────────────
+
+Aug 20  ██████
+Aug 21  ████████████████████████████████
+Aug 22  ███
+Aug 23  ·
+Aug 24  ·
+Aug 25  █████████
+
+Commits: 17  (2026-08-20 → 2026-08-25)
+Peak: Aug 21  (11 commits)
+```
+
+Flags: `--limit N` (recent buckets, default 30), `--by day|week`,
+`--metric commits|lines|contributors`.
+
+Days with no commits are shown as `·` rather than skipped — a gap in the
+history is information, and dropping it would quietly compress the time axis.
+Buckets use each commit's local calendar day, so an evening commit stays on its
+own day instead of sliding into the next one.
+
+### `repotool compare <refA> <refB>`
+
+What each of two refs has that the other does not — branches, tags or commits.
+
+```sh
+repotool compare main feature
+repotool compare v1.0 v2.0
+repotool compare HEAD~10 HEAD --json
+```
+
+```
+repotool compare — main vs feature
+
+                 main   feature
+commits ahead       1   2
+merges              —   —
+files changed       1   1
+churn               1   3 +3 / -0
+contributors        1   1
+
+only on main: Ada Lovelace (1)
+only on feature: Grace Hopper (2)
+```
+
+Each side is git's own `A..B` range — commits reachable from one ref and not
+the other — folded through the same model `stats` and `hotspots` are built on,
+so "ahead by" here counts what git counts. A ref compared with itself reports
+zero difference and exits 0; refs with no common ancestor are reported as
+unrelated rather than treated as an error.
+
 ### `repotool ask "<question>"`
 
 Deterministic answers to fixed question shapes — a keyword matcher over parsed
@@ -184,7 +288,7 @@ Prints a completion script for the named shell. See
 
 ## Scripting / JSON output
 
-`stats`, `hotspots` and `ask` take `--json`. The JSON goes to stdout and
+`stats`, `hotspots`, `health`, `timeline`, `ask` and `compare` take `--json`. The JSON goes to stdout and
 nothing else does, errors still go to stderr, and exit codes are unchanged — so
 `repotool stats --json | …` is safe to pipe. `graph` and `diff` have no
 `--json`: their value is the picture, and `--format svg` is graph's structured
@@ -193,6 +297,9 @@ export.
 ```sh
 repotool stats --json
 repotool hotspots --json --limit 25 --sort churn
+repotool health --json
+repotool timeline --json --by week
+repotool compare main feature --json
 repotool ask "who last touched src/app.js" --json
 ```
 
@@ -228,6 +335,59 @@ Field names are stable; new fields may be added, existing ones are not renamed.
 
 A `file` everywhere above is
 `{ path, commits, authors, added, removed, churn, binary, firstDate, lastDate }`.
+
+`health --json` carries the evidence behind each score, not just the score, so
+a script can see what produced it:
+
+```
+{
+  "repository": { … },
+  "empty":         boolean,
+  "overall":       { "score", "band", "dimensions": [measured dimension names] },
+  "activity":      { "score", "formula", "ratio", "recentPerDay", "baselinePerDay",
+                     "comparable", "reason" },
+  "concentration": { "score", "formula", "share", "topChurn", "totalChurn", "files" },
+  "stability":     { "score", "formula", "pattern", "fixCommits", "totalCommits", "share" },
+  "collaboration": { "score", "formula", "topContributor", "topCommits",
+                     "totalCommits", "contributors", "share" },
+  "warnings":      [ { "code", "message", "value", "threshold" } ]
+}
+```
+
+A dimension that could not be measured has `"score": null` and a `"reason"`,
+and its name is absent from `overall.dimensions`.
+
+`timeline --json`:
+
+```
+{
+  "repository": { … },
+  "empty":        boolean,
+  "by":           "day" | "week",
+  "metric":       "commits" | "lines" | "contributors",
+  "buckets":      [ { "date", "commits", "added", "removed", "contributors" } ],
+  "peak":         { "date", "commits" } | null,
+  "totalCommits": number
+}
+```
+
+`compare --json` describes both directions with the same shape, so a script can
+read them symmetrically:
+
+```
+{
+  "refA", "refB", "hashA", "hashB",
+  "identical":  boolean,
+  "mergeBase":  hash | null,
+  "a":          side,          // what refA has that refB does not
+  "b":          side,          // and the reverse
+  "sharedContributors": [name],
+  "sharedFiles":        [path]
+}
+
+side = { ref, range, commits, merges, filesChanged, added, removed, churn,
+         first, last, contributors, onlyContributors, files }
+```
 
 `ask --json` wraps the answer in the question that produced it, so a script
 does not have to keep its own note of what it asked:
@@ -292,14 +452,15 @@ proof itself — planting a third-party import to confirm the checker fails.
 
 ## Design
 
-Six commands over one shared reading layer. Feature modules never reach into
+Nine commands over one shared reading layer. Feature modules never reach into
 each other's internals.
 
 ```
 bin/repotool.js       argv routing, per-command help
 src/index.js          public API for using repotool as a library
 src/git-reader.js     the only file that talks to git
-src/analysis/         shared repo model + stats, hotspots and JSON renderers
+src/analysis/         shared repo model + stats, hotspots, health, timeline,
+                      compare, and the JSON renderers
 src/graph/            DAG layout + ASCII and SVG renderers
 src/query/            question -> intent -> answer (text and JSON together)
 src/diff/             Myers diff + unified-diff renderer

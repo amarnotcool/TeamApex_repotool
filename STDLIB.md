@@ -106,6 +106,21 @@ The greedy forward walk with a trace, plus backtracking to an edit script.
 - **Gained:** alignment that accounts for ANSI escape codes without a second
   dependency, and no trailing whitespace on any rendered row.
 
+### `asciichart`, `babar`, `cli-histogram` → one proportional-bar helper
+`src/format.js` (`bar`), used by `stats`, `hotspots`, `health` and `timeline`
+
+Every chart in the tool is the same six-line function: scale a value against
+the largest on screen, repeat a block character.
+
+- **Lost:** axes, gridlines, multi-series plots, line and sparkline shapes, and
+  auto-scaled tick labels. A chart needing a y-axis is not something this
+  helper can grow into.
+- **Gained:** four commands draw to one scale rule, so a bar means the same
+  thing everywhere in the output. It also forced the honest choice in
+  `timeline`: a day with no commits renders a dot rather than being dropped,
+  because a charting library's default of plotting only the points it was given
+  would have silently compressed the time axis.
+
 ### `numeral`, `pretty-bytes`, `Intl.NumberFormat` → manual digit grouping
 `src/format.js` (`count`, `churn`, `percent`, `decimal`)
 
@@ -127,6 +142,13 @@ The greedy forward walk with a trace, plus backtracking to an edit script.
   single day produced confident nonsense, so the model now reports the real
   elapsed span separately from the clamped one and declines to quote a per-day
   rate it cannot support.
+- **Also here:** `timeline` buckets commits by calendar day and ISO week
+  (`src/analysis/timeline.js`). Day keys are sliced straight out of git's ISO
+  string rather than routed through `Date`, because a round trip through UTC
+  moves an evening commit into the next day; week keys step back to the Monday
+  on or before the day. Both are a handful of lines against `startOfWeek` and
+  `eachDayOfInterval` — which is the honest comparison, since we need exactly
+  two of the hundred functions those libraries carry.
 
 ### `natural`, `compromise`, `nlp.js` → keyword-group intent matcher
 `src/query/parser.js`

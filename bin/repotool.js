@@ -20,7 +20,18 @@ const reader = require('../src/git-reader');
 const { createStyle } = require('../src/ansi');
 
 /** Flags that take a value rather than being booleans. */
-const VALUED_FLAGS = new Set(['limit', 'context', 'repo', 'branch', 'sort', 'window', 'format', 'output']);
+const VALUED_FLAGS = new Set([
+  'limit',
+  'context',
+  'repo',
+  'branch',
+  'sort',
+  'window',
+  'format',
+  'output',
+  'by',
+  'metric',
+]);
 
 function parseArgv(argv) {
   const positional = [];
@@ -135,6 +146,75 @@ const COMMANDS = {
     ],
     examples: ['repotool hotspots', 'repotool hotspots --limit 25 --sort churn', 'repotool hotspots --json'],
   },
+  health: {
+    usage: 'repotool health [--json]',
+    summary: 'four scored measurements of the repository, each with its formula',
+    options: [['--json', 'print the scores and their evidence as JSON']],
+    examples: ['repotool health', 'repotool health --json'],
+    notes: [
+      'Scores (0-100, higher is better). Every one is arithmetic over the same',
+      'history stats and hotspots read — no new git calls, no estimation:',
+      '',
+      '  Activity       min(recent commits/day ÷ baseline commits/day, 3) ÷ 3 × 100',
+      '                 The recent window is the newest quarter of history, the',
+      '                 baseline is the rest. Reported as unmeasurable — not as a',
+      '                 number — when either period spans under a day, because',
+      '                 clamping both spans would manufacture the ratio.',
+      '  Concentration  100 − (churn in the 3 busiest files ÷ total churn × 100)',
+      '  Stability      100 − (commit subjects matching the fix pattern ÷ commits × 100)',
+      '                 Pattern: fix, fixes, fixed, fixing, bug(s), bugfix, hotfix,',
+      '                 revert(s|ed), regression — word-boundary, case-insensitive.',
+      '  Collaboration  100 − (top contributor’s commits ÷ total commits × 100)',
+      '',
+      'Overall is the equal-weighted mean of the dimensions that could be',
+      'measured; an unmeasurable dimension is left out rather than filled in.',
+      '',
+      '  80-100 EXCELLENT    60-79 GOOD    40-59 FAIR    below 40 NEEDS ATTENTION',
+      '',
+      'Warnings print only when they trigger:',
+      '',
+      '  - one file changed in more than max(5, 25% of all commits) commits',
+      '  - more than 50% of all churn in the 3 busiest files',
+      '  - one contributor above 70% of all commits',
+    ],
+  },
+  timeline: {
+    usage: 'repotool timeline [--limit N] [--by day|week] [--metric commits|lines|contributors] [--json]',
+    summary: 'commit activity per day or week, as a bar chart',
+    options: [
+      ['--limit N', 'how many recent buckets to show (default 30)'],
+      ['--by KIND', 'day (default) or week'],
+      ['--metric KIND', 'commits (default), lines or contributors'],
+      ['--json', 'print the buckets as JSON'],
+    ],
+    examples: [
+      'repotool timeline',
+      'repotool timeline --limit 14',
+      'repotool timeline --by week --limit 12',
+      'repotool timeline --metric lines --json',
+    ],
+    notes: [
+      'Buckets are calendar days (or ISO weeks, starting Monday) taken from each',
+      'commit’s author date. Quiet days inside the window are shown as empty rows',
+      'rather than skipped, so the time axis stays honest.',
+    ],
+  },
+  compare: {
+    usage: 'repotool compare <refA> <refB> [--json]',
+    summary: 'what each of two refs has that the other does not',
+    options: [['--json', 'print both directions as JSON']],
+    examples: [
+      'repotool compare main feature',
+      'repotool compare v1.0 v2.0',
+      'repotool compare HEAD~10 HEAD --json',
+    ],
+    notes: [
+      'Each side is git’s own A..B range — commits reachable from one ref and not',
+      'the other — folded through the same model stats and hotspots use. Refs may',
+      'be branches, tags or commits; unrelated histories and a ref compared with',
+      'itself are both reported rather than treated as errors.',
+    ],
+  },
   ask: {
     usage: 'repotool ask "<question>" [--json]',
     summary: 'answer a fixed set of questions about the repository',
@@ -182,6 +262,13 @@ function commandUsage(name) {
   }
   parts.push('', 'Common options:', optionBlock(GLOBAL_OPTIONS));
   parts.push('', 'Examples:', ...command.examples.map((example) => `  ${example}`));
+
+  // Some commands need more than a flag list: how a score is computed, or what
+  // a bucket means. Printing it here keeps the explanation next to the command
+  // rather than only in the README.
+  if (command.notes) {
+    parts.push('', 'How it works:', ...command.notes.map((note) => (note ? `  ${note}` : '')));
+  }
 
   if (name === 'ask') {
     parts.push('', 'Questions repotool can answer:', questionList());
@@ -323,6 +410,68 @@ function commandHotspots(flags, style) {
   }
 
   console.log(renderHotspots(model, { limit, sort, color: colorPreference(flags) }));
+  return 0;
+}
+
+function commandHealth(flags, style) {
+  const { buildRepoModel } = require('../src/analysis/repo-model');
+
+  const cwd = path.resolve(flags.repo || process.cwd());
+  const model = buildRepoModel({ cwd, limit: numericFlag(flags, 'limit') });
+
+  if (flags.json) {
+    console.log(JSON.stringify(require('../src/analysis/to-json').healthJson(model), null, 2));
+    return 0;
+  }
+
+  const { renderHealth } = require('../src/analysis/render-health');
+  console.log(renderHealth(model, { color: colorPreference(flags) }));
+  return 0;
+}
+
+const TIMELINE_BUCKETS = ['day', 'week'];
+const TIMELINE_METRICS = ['commits', 'lines', 'contributors'];
+
+function commandTimeline(flags, style) {
+  const { buildRepoModel } = require('../src/analysis/repo-model');
+
+  const by = choiceFlag(flags, 'by', TIMELINE_BUCKETS, 'day');
+  const metric = choiceFlag(flags, 'metric', TIMELINE_METRICS, 'commits');
+  const limit = numericFlag(flags, 'limit');
+
+  const cwd = path.resolve(flags.repo || process.cwd());
+  const model = buildRepoModel({ cwd });
+  const options = { by, metric, limit };
+
+  if (flags.json) {
+    console.log(JSON.stringify(require('../src/analysis/to-json').timelineJson(model, options), null, 2));
+    return 0;
+  }
+
+  const { renderTimeline } = require('../src/analysis/render-timeline');
+  console.log(renderTimeline(model, { ...options, color: colorPreference(flags) }));
+  return 0;
+}
+
+function commandCompare(positional, flags, style) {
+  const cwd = path.resolve(flags.repo || process.cwd());
+  const [refA, refB] = positional;
+
+  if (!refA || !refB) {
+    console.error(style.red('repotool compare needs two revisions.'));
+    console.error(style.dim('Usage: repotool compare <refA> <refB> — see "repotool help compare".'));
+    return 2;
+  }
+
+  if (flags.json) {
+    const { compareRefs } = require('../src/analysis/compare');
+    const { compareJson } = require('../src/analysis/to-json');
+    console.log(JSON.stringify(compareJson(compareRefs(refA, refB, { cwd })), null, 2));
+    return 0;
+  }
+
+  const { renderCompare } = require('../src/analysis/render-compare');
+  console.log(renderCompare(refA, refB, { cwd, color: colorPreference(flags) }));
   return 0;
 }
 
@@ -468,6 +617,9 @@ function main(argv) {
     graph: () => commandGraph(flags, style),
     stats: () => commandStats(flags, style),
     hotspots: () => commandHotspots(flags, style),
+    health: () => commandHealth(flags, style),
+    timeline: () => commandTimeline(flags, style),
+    compare: () => commandCompare(rest, flags, style),
     ask: () => commandAsk(rest, flags, style),
     diff: () => commandDiff(rest, flags, style),
     completion: () => commandCompletion(rest, flags, style),

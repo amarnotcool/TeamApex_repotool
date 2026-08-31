@@ -225,17 +225,22 @@ function normaliseNumstatPath(raw) {
  * Merges carry no numstat output by default, so their changes are attributed
  * to the commits that actually introduced them rather than counted twice.
  *
+ * @param {string[]} [revs] explicit revision arguments (e.g. ['main..feature']),
+ *   used instead of --all when supplied — this is what scopes the model to a
+ *   range for `repotool compare`.
+ *
  * @returns {Array} commits, newest first, each with a `files` array
  */
-function readHistoryWithStats({ cwd = process.cwd(), all = true, limit } = {}) {
+function readHistoryWithStats({ cwd = process.cwd(), all = true, limit, revs } = {}) {
   if (!isRepo(cwd)) {
     throw new GitError(`not a git repository: ${cwd}`, { code: 'NOT_A_REPO' });
   }
 
   const format = LOG_FIELDS.map(([placeholder]) => placeholder).join(FIELD);
   const args = ['log', '--parents', '--numstat', `--pretty=format:${RECORD}${format}`];
-  if (all) args.push('--all');
+  if (all && !revs) args.push('--all');
   if (typeof limit === 'number' && limit > 0) args.push(`--max-count=${limit}`);
+  if (revs && revs.length) args.push(...revs);
 
   const raw = git(args, { cwd, allowFailure: true });
   if (raw === null) return [];
@@ -304,6 +309,16 @@ function resolveRev(rev, { cwd = process.cwd() } = {}) {
     throw new GitError(`unknown revision: ${rev}`, { code: 'BAD_REV' });
   }
   return out.trim();
+}
+
+/**
+ * The commit two revisions last had in common, or null when they share no
+ * history at all. Unrelated branches are a legitimate thing to compare, so a
+ * missing base is a result rather than an error.
+ */
+function mergeBase(revA, revB, { cwd = process.cwd() } = {}) {
+  const out = git(['merge-base', revA, revB], { cwd, allowFailure: true });
+  return out === null || !out.trim() ? null : out.trim();
 }
 
 /** Contents of `path` at `rev`, or null when the file does not exist there. */
@@ -405,6 +420,7 @@ module.exports = {
   readHistoryWithStats,
   normaliseNumstatPath,
   resolveRev,
+  mergeBase,
   fileAtCommit,
   changedPaths,
   readBlobs,

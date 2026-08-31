@@ -31,6 +31,12 @@ const SPEC = {
     flags: ['--limit', '--sort', '--json'],
     values: { '--sort': ['score', 'commits', 'churn', 'authors'] },
   },
+  health: { flags: ['--limit', '--json'], values: {} },
+  timeline: {
+    flags: ['--limit', '--by', '--metric', '--json'],
+    values: { '--by': ['day', 'week'], '--metric': ['commits', 'lines', 'contributors'] },
+  },
+  compare: { flags: ['--json'], values: { ref: 'ref' } },
   ask: { flags: ['--json'], values: {} },
   diff: { flags: ['--context', '--stat'], values: {} },
   completion: { flags: [], values: {} },

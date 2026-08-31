@@ -50,6 +50,12 @@ lazy(api, 'analysis', () => ({
   ...require('./analysis/render-stats'),
   ...require('./analysis/render-hotspots'),
   ...require('./analysis/to-json'),
+  ...require('./analysis/health'),
+  ...require('./analysis/render-health'),
+  ...require('./analysis/timeline'),
+  ...require('./analysis/render-timeline'),
+  ...require('./analysis/compare'),
+  ...require('./analysis/render-compare'),
 }));
 lazy(api, 'buildRepoModel', () => require('./analysis/repo-model').buildRepoModel);
 lazy(api, 'rankHotspots', () => require('./analysis/repo-model').rankHotspots);
@@ -58,6 +64,15 @@ lazy(api, 'renderStats', () => require('./analysis/render-stats').renderStats);
 lazy(api, 'renderHotspots', () => require('./analysis/render-hotspots').renderHotspots);
 lazy(api, 'statsJson', () => require('./analysis/to-json').statsJson);
 lazy(api, 'hotspotsJson', () => require('./analysis/to-json').hotspotsJson);
+lazy(api, 'computeHealth', () => require('./analysis/health').computeHealth);
+lazy(api, 'renderHealth', () => require('./analysis/render-health').renderHealth);
+lazy(api, 'healthJson', () => require('./analysis/to-json').healthJson);
+lazy(api, 'buildTimeline', () => require('./analysis/timeline').buildTimeline);
+lazy(api, 'renderTimeline', () => require('./analysis/render-timeline').renderTimeline);
+lazy(api, 'timelineJson', () => require('./analysis/to-json').timelineJson);
+lazy(api, 'compareRefs', () => require('./analysis/compare').compareRefs);
+lazy(api, 'renderCompare', () => require('./analysis/render-compare').renderCompare);
+lazy(api, 'compareJson', () => require('./analysis/to-json').compareJson);
 
 // --- graph -----------------------------------------------------------------
 lazy(api, 'graph', () => ({

@@ -93,4 +93,77 @@ function hotspotsJson(model, { limit = 10, sort = 'score' } = {}) {
   };
 }
 
-module.exports = { statsJson, hotspotsJson, headJson, fileJson };
+/** The `repotool health --json` document. */
+function healthJson(model) {
+  const health = require('./health').computeHealth(model);
+  return {
+    repository: { path: model.cwd, name: path.basename(model.cwd), head: headJson(model.head) },
+    empty: health.empty,
+    overall: health.overall,
+    activity: health.activity,
+    concentration: health.concentration,
+    stability: health.stability,
+    collaboration: health.collaboration,
+    warnings: health.warnings,
+  };
+}
+
+/** The `repotool timeline --json` document. */
+function timelineJson(model, options = {}) {
+  const timeline = require('./timeline').buildTimeline(model, options);
+  return {
+    repository: { path: model.cwd, name: path.basename(model.cwd), head: headJson(model.head) },
+    empty: timeline.empty,
+    by: timeline.by,
+    metric: timeline.metric,
+    buckets: timeline.buckets,
+    peak: timeline.peak,
+    totalCommits: timeline.totalCommits,
+  };
+}
+
+/** One side of a comparison, without the internal model attached. */
+function compareSideJson(side) {
+  return {
+    ref: side.ref,
+    range: side.range,
+    commits: side.commits,
+    merges: side.merges,
+    filesChanged: side.filesChanged,
+    added: side.added,
+    removed: side.removed,
+    churn: side.churn,
+    first: side.first,
+    last: side.last,
+    contributors: side.contributors,
+    onlyContributors: side.onlyContributors,
+    files: side.files,
+  };
+}
+
+/** The `repotool compare --json` document: both directions, same shape. */
+function compareJson(result) {
+  return {
+    refA: result.refA,
+    refB: result.refB,
+    hashA: result.hashA,
+    hashB: result.hashB,
+    identical: result.identical,
+    mergeBase: result.mergeBase,
+    a: compareSideJson(result.a),
+    b: compareSideJson(result.b),
+    sharedContributors: result.sharedContributors,
+    sharedFiles: result.sharedFiles,
+  };
+}
+
+module.exports = {
+  statsJson,
+  hotspotsJson,
+  healthJson,
+  timelineJson,
+  compareJson,
+  compareSideJson,
+  headJson,
+  fileJson,
+};
