@@ -1,0 +1,2 @@
+track = "A"
+pitch = "A zero-dependency git CLI that graphs history, scores repository health, and answers deterministic questions about a repo — nothing but Node's standard library."

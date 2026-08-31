@@ -122,26 +122,25 @@ repotool stats --json
 ```
 
 ```
-repotool stats — Zero Dependency  on branch main
+repotool stats — Zero Dependency - Team Apex  on branch master
 
-commits        19
-contributors   2
-branches       3 local, 3 remote
-files touched  46
-line churn     12,910  +12,013 / -897
-history        2026-08-20 → 2026-08-25  (4 days)
-last commit    10 minutes ago
+commits        16
+contributors   1
+branches       1 local, 1 remote
+files touched  45
+line churn     10,829  +9,996 / -833
+history        2026-08-29 → 2026-08-31  (2 days)
+last commit    13 minutes ago
 
 Top 3 contributors
 ──────────────────
-13  ████████████████  Devpratap
- 6  ███████           Devpratap Singh
+16  ████████████████  Devpratap Singh
 
 Top 3 most-changed files
 ────────────────────────
-10 commits  718 lines    README.md
- 8 commits  1,017 lines  bin/repotool.js
- 7 commits  733 lines    src/git-reader.js
+9 commits  1,019 lines  README.md
+6 commits  808 lines    bin/repotool.js
+6 commits  57 lines     package.json
 ```
 
 Flags: `--limit N`, `--json`.
@@ -158,13 +157,13 @@ repotool hotspots --limit 25 --sort churn
 ```
 
 ```
-repotool hotspots — top 3 of 46 files
+repotool hotspots — top 3 of 45 files
 ranked by score (commits 50% · churn 30% · authors 20%), each scaled against the busiest file
 
 rank  score     commits  authors  churn  added/removed  file
-  1.  ████████       10        2    718     +671 / -47  README.md
-  2.  ████████        8        2  1,017     +946 / -71  bin/repotool.js
-  3.  ███████         7        2    733     +706 / -27  src/git-reader.js
+  1.  ████████        9        1  1,019    +825 / -194  README.md
+  2.  ██████          6        1    808     +738 / -70  bin/repotool.js
+  3.  █████           5        1    702    +588 / -114  src/query/handlers.js
 ```
 
 Flags: `--limit N` (default 10), `--sort score|commits|churn|authors`, `--json`.
@@ -305,19 +304,27 @@ repotool health --json
 ```
 
 ```
-repotool health — Zero Dependency
+repotool health — Zero Dependency - Team Apex
 
-Activity         —                    this history spans under a day, so per-day rates would be meaningless
-Concentration   80  ████████████████  20% of 12,910 churned lines are in the 3 busiest files
-Stability       68  ██████████████    6 commits of 19 mention a fix, bug, revert or regression
-Collaboration   32  ██████            Devpratap made 68% of 19 commits
+Activity         —                   this history spans under a day, so per-day rates would be meaningless
+Concentration   77  ███████████████  23% of 10,829 churned lines are in the 3 busiest files
+Stability       75  ███████████████  4 commits of 16 mention a fix, bug, revert or regression
+Collaboration    0                   Devpratap Singh made 100% of 16 commits
 
-Overall   60  GOOD (mean of 3 measurable dimensions)
+Overall   51  FAIR (mean of 3 measurable dimensions)
 equal-weighted mean of the scores above · bands: 80+ EXCELLENT · 60+ GOOD · 40+ FAIR · 0+ NEEDS ATTENTION
 
 Warnings
 ────────
-! README.md changed in 10 of 19 commits (threshold: more than 5)
+! README.md changed in 9 of 16 commits (threshold: more than 5)
+! Devpratap Singh made 100% of all commits (threshold: above 70%)
+
+Formulas
+  Activity      min(recent commits/day ÷ baseline commits/day, 3) ÷ 3 × 100
+  Concentration 100 − (churn in the 3 busiest files ÷ total churn × 100)
+  Stability     100 − (commit subjects matching the fix pattern ÷ total commits × 100)
+  Collaboration 100 − (top contributor's commits ÷ total commits × 100)
+  warnings      one file in more than 5 commits · top-3 churn above 50% · one author above 70%
 ```
 
 Flags: `--json`. `repotool help health` prints the formulas, the bands and the
@@ -366,15 +373,12 @@ repotool timeline --metric lines --json
 Repository Activity
 ───────────────────
 
-Aug 20  ██████
-Aug 21  ████████████████████████████████
-Aug 22  ███
-Aug 23  ·
-Aug 24  ·
-Aug 25  ███████████████
+Aug 29  ████████████
+Aug 30  ████████████████████████████████
+Aug 31  ████████████████████
 
-Commits: 19  (2026-08-20 → 2026-08-25)
-Peak: Aug 21  (11 commits)
+Commits: 16  (2026-08-29 → 2026-08-31)
+Peak: Aug 30  (8 commits)
 ```
 
 Flags: `--limit N` (recent buckets, default 30), `--by day|week`,
