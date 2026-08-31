@@ -85,25 +85,26 @@ One screen describing the repository: size, people, branches, churn, and where
 the changes land.
 
 ```
-repotool stats â€” Zero Dependency  on branch main
+repotool stats — Zero Dependency  on branch main
 
-commits        11
-contributors   1
-branches       1 local, 1 remote
-files touched  25
-line churn     6,373  +5,691 / -682
-history        2026-08-20 â†’ 2026-08-21  (1 day)
-last commit    43 minutes ago
+commits        15
+contributors   2
+branches       2 local, 1 remote
+files touched  37
+line churn     10,666  +9,796 / -870
+history        2026-08-20 → 2026-08-25  (4 days)
+last commit    13 minutes ago
 
 Top 3 contributors
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-11  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  Devpratap
+──────────────────
+13  ████████████████  Devpratap
+ 2  ██                Devpratap Singh
 
 Top 3 most-changed files
-â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-6 commits  302 lines  README.md
-5 commits  596 lines  src/git-reader.js
-5 commits  516 lines  bin/repotool.js
+────────────────────────
+8 commits  497 lines  README.md
+7 commits  863 lines  bin/repotool.js
+6 commits  874 lines  src/query/handlers.js
 ```
 
 ### `repotool hotspots`
@@ -118,6 +119,16 @@ repotool hotspots --limit 25 --sort churn
 ```
 
 Sort by `score` (default), `commits`, `churn` or `authors`.
+
+#### Where the churn numbers come from
+
+Every line-count figure in `stats`, `hotspots` and `ask` comes from a single
+`git log --numstat` pass over the whole history. Git emits no numstat for
+merge commits, so **merges are excluded from churn** — that avoids counting the
+same lines twice on a merge-heavy history, but it does mean a repository that
+squash-merges everything will report less churn than the branch history
+suggests. Every file-level answer reads that same pass, so `hotspots` and
+`ask "which file changed the most often"` cannot disagree with each other.
 
 ### `repotool ask "<question>"`
 
@@ -159,10 +170,17 @@ repotool diff HEAD~1 HEAD --stat
 Lines that were *edited* rather than replaced get a second, character-level
 Myers pass — the same algorithm, run again over the two lines' characters — and
 only the span that actually changed is underlined inside the usual red/green
-line. Lines with less than 30% of their characters in common are treated as
-replacements and left whole-line coloured, because character-level detail on
-unrelated lines is noise. With `--no-color` (or `NO_COLOR`) the extra pass is
-skipped entirely: there is nothing to show it with.
+line. A pair is only treated as an edit when it clears three guards: at least
+30% of characters in common, no more than three separate changed runs per
+side, and runs averaging at least two characters. Anything else is a rewrite
+and stays whole-line coloured, because character-level detail on unrelated
+lines is noise rather than information. With `--no-color` (or `NO_COLOR`) the
+extra pass is skipped entirely: there is nothing to show it with.
+
+### `repotool completion <bash|zsh>`
+
+Prints a completion script for the named shell. See
+[Shell completion](#shell-completion) for installation.
 
 ## Scripting / JSON output
 
